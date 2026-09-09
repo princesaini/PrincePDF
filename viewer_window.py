@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QStatusBar, QStackedWidget,
     QPushButton, QFrame, QApplication
 )
-from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
 from app_config import AppConfig
 from document_model import DocumentModel
@@ -27,7 +26,6 @@ from render_cache import RenderCache
 from pdf_view_widget import PdfViewWidget, ViewMode
 from sidebar_widget import SidebarWidget
 from search_bar import SearchBar
-from dialogs import DocumentPropertiesDialog, GoToPageDialog, WindowsDefaultAppDialog, AboutDialog
 import windows_integration as wi
 import style
 
@@ -686,6 +684,7 @@ class ViewerWindow(QMainWindow):
         if not self.doc_model.is_open:
             return
 
+        from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         dialog = QPrintDialog(printer, self)
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
@@ -874,6 +873,7 @@ class ViewerWindow(QMainWindow):
         if not self.doc_model.is_open:
             QMessageBox.information(self, "No Document", "Please open a PDF document first.")
             return
+        from dialogs import DocumentPropertiesDialog
         meta = self.doc_model.get_metadata()
         dlg = DocumentPropertiesDialog(meta, self)
         dlg.exec()
@@ -881,11 +881,13 @@ class ViewerWindow(QMainWindow):
     def show_goto_dialog(self):
         if not self.doc_model.is_open:
             return
+        from dialogs import GoToPageDialog
         dlg = GoToPageDialog(self.pdf_view.current_page, self.doc_model.page_count, self)
         if dlg.exec() == GoToPageDialog.DialogCode.Accepted:
             self.pdf_view.go_to_page(dlg.get_selected_page())
 
     def show_default_app_dialog(self):
+        from dialogs import WindowsDefaultAppDialog
         current_file = self.doc_model.filepath or ""
         dlg = WindowsDefaultAppDialog(current_file, self)
         dlg.exec()
@@ -898,6 +900,7 @@ class ViewerWindow(QMainWindow):
             QMessageBox.warning(self, "Error", f"Failed to create shortcut: {msg}")
 
     def show_about_dialog(self):
+        from dialogs import AboutDialog
         dlg = AboutDialog(self)
         dlg.exec()
 

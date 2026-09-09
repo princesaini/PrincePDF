@@ -8,7 +8,7 @@ Contains:
 
 from typing import List, Dict, Any, Optional
 import fitz
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QColor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QListWidget,
@@ -169,16 +169,12 @@ class SidebarWidget(QWidget):
     def _build_thumbnails(self):
         self.thumb_list.clear()
         self._thumbnail_widgets.clear()
+        self._pending_thumb_indices = list(range(self.doc_model.page_count))
         dpr = self.devicePixelRatioF()
 
         for p_idx in range(self.doc_model.page_count):
             item = QListWidgetItem(self.thumb_list)
             card = ThumbnailItemWidget(p_idx, self)
-            
-            # Render thumbnail pixmap
-            pixmap = self.render_cache.get_thumbnail(self.doc_model, p_idx, max_width=130, dpr=dpr)
-            if pixmap:
-                card.set_pixmap(pixmap)
 
             # Compute size hint based on aspect ratio
             w, h = self.doc_model.get_page_size(p_idx)
@@ -190,12 +186,49 @@ class SidebarWidget(QWidget):
             self.thumb_list.setItemWidget(item, card)
             self._thumbnail_widgets.append(card)
 
+        # Render first 3 thumbnails immediately so the visible viewport is populated instantly
+        initial_count = min(3, len(self._pending_thumb_indices))
+        for _ in range(initial_count):
+            p_idx = self._pending_thumb_indices.pop(0)
+            pixmap = self.render_cache.get_thumbnail(self.doc_model, p_idx, max_width=130, dpr=dpr)
+            if pixmap and p_idx < len(self._thumbnail_widgets):
+                self._thumbnail_widgets[p_idx].set_pixmap(pixmap)
+
         self.highlight_page(0)
+
+        # Progressively render remaining thumbnails in idle slices without blocking UI
+        if self._pending_thumb_indices:
+            QTimer.singleShot(20, self._render_pending_thumbnails)
+
+    def _render_pending_thumbnails(self):
+        if not getattr(self, "_pending_thumb_indices", None) or not self.doc_model.is_open:
+            return
+        dpr = self.devicePixelRatioF()
+        batch = self._pending_thumb_indices[:4]
+        self._pending_thumb_indices = self._pending_thumb_indices[4:]
+
+        for p_idx in batch:
+            if p_idx < len(self._thumbnail_widgets):
+                pixmap = self.render_cache.get_thumbnail(self.doc_model, p_idx, max_width=130, dpr=dpr)
+                if pixmap:
+                    self._thumbnail_widgets[p_idx].set_pixmap(pixmap)
+
+        if self._pending_thumb_indices:
+            QTimer.singleShot(15, self._render_pending_thumbnails)
 
     def highlight_page(self, page_num: int):
         self.current_page = page_num
         for idx, card in enumerate(self._thumbnail_widgets):
             card.set_active(idx == page_num)
+
+        # Ensure active page thumbnail is rendered
+        if 0 <= page_num < len(self._thumbnail_widgets):
+            card = self._thumbnail_widgets[page_num]
+            if card.image_label.pixmap().isNull() if card.image_label.pixmap() else True:
+                dpr = self.devicePixelRatioF()
+                pixmap = self.render_cache.get_thumbnail(self.doc_model, page_num, max_width=130, dpr=dpr)
+                if pixmap:
+                    card.set_pixmap(pixmap)
 
         if 0 <= page_num < self.thumb_list.count():
             item = self.thumb_list.item(page_num)

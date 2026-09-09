@@ -55,7 +55,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -65,4 +65,34 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='resources/app_icon.ico',
+)
+
+exe_dir = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='PrincePDF',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='resources/app_icon.ico',
+)
+
+coll = COLLECT(
+    exe_dir,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='app',
 )

@@ -53,15 +53,25 @@ def main():
         elif os.path.exists(arg) and arg.lower().endswith(".pdf"):
             initial_file = os.path.abspath(arg)
 
-    # Automatically register file association if not already registered
-    if not wi.is_registered():
-        try:
-            wi.register_windows_file_association()
-        except Exception:
-            pass
+    # Pre-apply stylesheet directly on QApplication to eliminate widget re-polishing overhead
+    import style
+    from app_config import AppConfig
+    config = AppConfig()
+    theme = config.get("theme", "dark")
+    app.setStyleSheet(style.get_stylesheet(theme))
 
     window = ViewerWindow(initial_filepath=initial_file)
     window.showMaximized()
+
+    # Defer registry checks so window appears on screen with 0 startup delay
+    from PyQt6.QtCore import QTimer
+    def _deferred_check():
+        if not wi.is_registered():
+            try:
+                wi.register_windows_file_association()
+            except Exception:
+                pass
+    QTimer.singleShot(1200, _deferred_check)
 
     sys.exit(app.exec())
 

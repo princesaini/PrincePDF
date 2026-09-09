@@ -9,6 +9,8 @@ __pycache__/
 # PyInstaller build outputs & standalone executables
 build/
 dist/
+dist_fast/
+app/
 *.exe
 *.spec.bak
 

@@ -27,10 +27,13 @@ def get_pythonw_path() -> str:
 
 
 def get_executable_path() -> str:
-    """Returns path to PrincePDF.exe if available, otherwise pythonw.exe."""
+    """Returns path to fastest PrincePDF.exe if available, otherwise pythonw.exe."""
     if getattr(sys, "frozen", False):
         return sys.executable
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    app_exe = os.path.join(current_dir, "app", "PrincePDF.exe")
+    if os.path.exists(app_exe):
+        return app_exe
     root_exe = os.path.join(current_dir, "PrincePDF.exe")
     if os.path.exists(root_exe):
         return root_exe
