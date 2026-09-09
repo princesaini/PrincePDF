@@ -121,8 +121,23 @@ def run_tests():
     assert win.total_pages_lbl.text() == "/ 3"
     print("[PASS] Test 14: ViewerWindow full UI integration verified")
 
+    # Test 10: Custom Unified Title & Menu Bar
+    assert win.windowFlags() & Qt.WindowType.FramelessWindowHint, "FramelessWindowHint not set!"
+    assert hasattr(win, "custom_title_bar"), "custom_title_bar not found on ViewerWindow!"
+    assert win.menuWidget() == win.custom_title_bar, "custom_title_bar is not set as menuWidget!"
+    assert "sample_document.pdf" in win.custom_title_bar.title_lbl.text(), f"Expected document name in title, got: {win.custom_title_bar.title_lbl.text()}"
+    assert win.custom_title_bar.min_btn is not None
+    assert win.custom_title_bar.max_btn is not None
+    assert win.custom_title_bar.close_btn is not None
+    print(f"[PASS] Test 15: Custom Title & Menu Bar verified (Title: '{win.custom_title_bar.title_lbl.text()}')")
+
+    # Test 11: Document Close & Title Reset
+    win.close_document()
+    assert win.custom_title_bar.title_lbl.text() == "PrincePDF", f"Expected 'PrincePDF', got '{win.custom_title_bar.title_lbl.text()}'"
+    print("[PASS] Test 16: Document close resets title label to 'PrincePDF'")
+
     win.close()
-    print("\n=== ALL 14 TESTS PASSED SUCCESSFULLY! ===")
+    print("\n=== ALL 16 TESTS PASSED SUCCESSFULLY! ===")
 
 
 if __name__ == "__main__":

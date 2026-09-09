@@ -33,21 +33,68 @@ def get_stylesheet(theme: str = "dark") -> str:
             font-size: 13px;
         }}
 
-        /* Top Menu Bar */
-        QMenuBar {{
+        /* Top Unified Title & Menu Bar */
+        QWidget#CustomTitleBar {{
             background-color: {surface_alt};
-            color: {text};
             border-bottom: 1px solid {border};
-            padding: 2px 6px;
         }}
-        QMenuBar::item {{
+        QMenuBar#CustomMenuBar {{
+            background-color: transparent;
+            border: none;
+            padding: 0px 2px;
+        }}
+        QMenuBar#CustomMenuBar::item {{
             background: transparent;
-            padding: 6px 10px;
+            color: {text};
+            padding: 5px 9px;
             border-radius: 4px;
+            margin: 2px 1px;
         }}
-        QMenuBar::item:selected {{
+        QMenuBar#CustomMenuBar::item:selected {{
             background-color: {surface_hover};
         }}
+        QLabel#TitleLabel {{
+            color: {text_muted};
+            font-size: 12px;
+            font-weight: 600;
+            padding: 0px 8px;
+        }}
+        QPushButton#TitleBtn {{
+            background-color: transparent;
+            color: {text_muted};
+            border: none;
+            border-radius: 0px;
+            font-size: 12px;
+            font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+            padding: 0px;
+            margin: 0px;
+        }}
+        QPushButton#TitleBtn:hover {{
+            background-color: {surface_hover};
+            color: {text};
+        }}
+        QPushButton#TitleBtn:pressed {{
+            background-color: {surface_active};
+        }}
+        QPushButton#CloseBtn {{
+            background-color: transparent;
+            color: {text_muted};
+            border: none;
+            border-radius: 0px;
+            font-size: 13px;
+            font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+            padding: 0px;
+            margin: 0px;
+        }}
+        QPushButton#CloseBtn:hover {{
+            background-color: #e81123;
+            color: #ffffff;
+        }}
+        QPushButton#CloseBtn:pressed {{
+            background-color: #c4101f;
+            color: #ffffff;
+        }}
+
         QMenu {{
             background-color: {surface};
             color: {text};

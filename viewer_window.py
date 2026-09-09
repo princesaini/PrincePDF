@@ -6,12 +6,14 @@ modern toolbar, menu actions, print support, and Windows 11 integration.
 
 import os
 import sys
+import ctypes
+from ctypes import wintypes
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QEvent
 from PyQt6.QtGui import (
     QAction, QIcon, QKeySequence, QDragEnterEvent, QDropEvent,
-    QPixmap, QPainter
+    QPixmap, QPainter, QCursor
 )
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -19,6 +21,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QStatusBar, QStackedWidget,
     QPushButton, QFrame, QApplication
 )
+from custom_title_bar import CustomTitleBar
 
 from app_config import AppConfig
 from document_model import DocumentModel
@@ -153,9 +156,25 @@ class ViewerWindow(QMainWindow):
         self.current_theme = self.config.get("theme", "dark")
         self.is_night_mode = self.config.get("night_mode", False)
 
-        self.setWindowTitle("PrincePDF")
+        # Frameless Window for modern Windows 11 look
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(800, 600)
         self.setWindowState(Qt.WindowState.WindowMaximized)
+
+        # Enable Windows 11 DWM shadow and rounded corners
+        if sys.platform == "win32":
+            try:
+                class MARGINS(ctypes.Structure):
+                    _fields_ = [
+                        ("cxLeftWidth", ctypes.c_int),
+                        ("cxRightWidth", ctypes.c_int),
+                        ("cyTopHeight", ctypes.c_int),
+                        ("cyBottomHeight", ctypes.c_int),
+                    ]
+                margins = MARGINS(1, 1, 1, 1)
+                ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(int(self.winId()), ctypes.byref(margins))
+            except Exception:
+                pass
 
         # Set App Icon
         icon_path = wi.get_icon_path()
@@ -164,6 +183,12 @@ class ViewerWindow(QMainWindow):
 
         # Enable Drag & Drop
         self.setAcceptDrops(True)
+
+        # Unified Custom Title & Menu Bar
+        self.custom_title_bar = CustomTitleBar(self)
+        self.setMenuWidget(self.custom_title_bar)
+
+        self.setWindowTitle("PrincePDF")
 
         # Build UI Components
         self._setup_ui()
@@ -233,7 +258,12 @@ class ViewerWindow(QMainWindow):
     # Menus
     # -------------------------------------------------------------------------
     def _setup_menus(self):
-        menubar = self.menuBar()
+        menubar = self.custom_title_bar.menu_bar
+
+        def add_act(menu, action):
+            menu.addAction(action)
+            self.addAction(action)
+            return action
 
         # File Menu
         file_menu = menubar.addMenu("&File")
@@ -241,7 +271,7 @@ class ViewerWindow(QMainWindow):
         open_action = QAction("📂 &Open...", self)
         open_action.setShortcut(QKeySequence("Ctrl+O"))
         open_action.triggered.connect(self.choose_and_open_file)
-        file_menu.addAction(open_action)
+        add_act(file_menu, open_action)
 
         self.recent_menu = file_menu.addMenu("🕒 Open &Recent")
         self._update_recent_menu()
@@ -251,24 +281,24 @@ class ViewerWindow(QMainWindow):
         save_action = QAction("💾 Save &As...", self)
         save_action.setShortcut(QKeySequence("Ctrl+S"))
         save_action.triggered.connect(self.save_as)
-        file_menu.addAction(save_action)
+        add_act(file_menu, save_action)
 
         print_action = QAction("🖨️ &Print...", self)
         print_action.setShortcut(QKeySequence("Ctrl+P"))
         print_action.triggered.connect(self.print_document)
-        file_menu.addAction(print_action)
+        add_act(file_menu, print_action)
 
         file_menu.addSeparator()
 
         close_action = QAction("✕ &Close Document", self)
         close_action.setShortcut(QKeySequence("Ctrl+W"))
         close_action.triggered.connect(self.close_document)
-        file_menu.addAction(close_action)
+        add_act(file_menu, close_action)
 
         exit_action = QAction("🚪 E&xit", self)
         exit_action.setShortcut(QKeySequence("Alt+F4"))
         exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        add_act(file_menu, exit_action)
 
         # Edit Menu
         edit_menu = menubar.addMenu("&Edit")
@@ -276,19 +306,19 @@ class ViewerWindow(QMainWindow):
         copy_action = QAction("📋 &Copy Text", self)
         copy_action.setShortcut(QKeySequence("Ctrl+C"))
         copy_action.triggered.connect(self.pdf_view.copy_current_selection)
-        edit_menu.addAction(copy_action)
+        add_act(edit_menu, copy_action)
 
         select_all_action = QAction("☑️ &Select All (Page)", self)
         select_all_action.setShortcut(QKeySequence("Ctrl+A"))
         select_all_action.triggered.connect(self.pdf_view.select_all_current_page)
-        edit_menu.addAction(select_all_action)
+        add_act(edit_menu, select_all_action)
 
         edit_menu.addSeparator()
 
         find_action = QAction("🔍 &Find in Document...", self)
         find_action.setShortcut(QKeySequence("Ctrl+F"))
         find_action.triggered.connect(self.toggle_search_bar)
-        edit_menu.addAction(find_action)
+        add_act(edit_menu, find_action)
 
         # View Menu
         view_menu = menubar.addMenu("&View")
@@ -297,74 +327,74 @@ class ViewerWindow(QMainWindow):
         single_action = QAction("📄 Single Page View", self)
         single_action.setShortcut(QKeySequence("Ctrl+Alt+1"))
         single_action.triggered.connect(lambda: self.set_view_mode(ViewMode.SINGLE))
-        view_menu.addAction(single_action)
+        add_act(view_menu, single_action)
 
         continuous_action = QAction("📜 Continuous Scroll View", self)
         continuous_action.setShortcut(QKeySequence("Ctrl+Alt+2"))
         continuous_action.triggered.connect(lambda: self.set_view_mode(ViewMode.CONTINUOUS))
-        view_menu.addAction(continuous_action)
+        add_act(view_menu, continuous_action)
 
         side_action = QAction("📖 Side-by-Side (Spread) View", self)
         side_action.setShortcut(QKeySequence("Ctrl+Alt+3"))
         side_action.triggered.connect(lambda: self.set_view_mode(ViewMode.SIDE_BY_SIDE))
-        view_menu.addAction(side_action)
+        add_act(view_menu, side_action)
 
         view_menu.addSeparator()
 
         zoom_in_act = QAction("➕ Zoom &In", self)
         zoom_in_act.setShortcut(QKeySequence("Ctrl+="))
         zoom_in_act.triggered.connect(self.pdf_view.zoom_in)
-        view_menu.addAction(zoom_in_act)
+        add_act(view_menu, zoom_in_act)
 
         zoom_out_act = QAction("➖ Zoom &Out", self)
         zoom_out_act.setShortcut(QKeySequence("Ctrl+-"))
         zoom_out_act.triggered.connect(self.pdf_view.zoom_out)
-        view_menu.addAction(zoom_out_act)
+        add_act(view_menu, zoom_out_act)
 
         zoom_100_act = QAction("100% Actual Size", self)
         zoom_100_act.setShortcut(QKeySequence("Ctrl+0"))
         zoom_100_act.triggered.connect(self.pdf_view.reset_zoom)
-        view_menu.addAction(zoom_100_act)
+        add_act(view_menu, zoom_100_act)
 
         fit_w_act = QAction("⬌ Fit to &Width", self)
         fit_w_act.setShortcut(QKeySequence("Ctrl+2"))
         fit_w_act.triggered.connect(self.pdf_view.set_fit_width)
-        view_menu.addAction(fit_w_act)
+        add_act(view_menu, fit_w_act)
 
         fit_p_act = QAction("⬍ Fit to &Page", self)
         fit_p_act.setShortcut(QKeySequence("Ctrl+1"))
         fit_p_act.triggered.connect(self.pdf_view.set_fit_page)
-        view_menu.addAction(fit_p_act)
+        add_act(view_menu, fit_p_act)
 
         view_menu.addSeparator()
 
         rot_cw_act = QAction("↻ Rotate Clockwise", self)
         rot_cw_act.setShortcut(QKeySequence("Ctrl+R"))
         rot_cw_act.triggered.connect(self.pdf_view.rotate_clockwise)
-        view_menu.addAction(rot_cw_act)
+        add_act(view_menu, rot_cw_act)
 
         night_act = QAction("🌙 Night Reading Mode", self)
         night_act.setCheckable(True)
         night_act.setChecked(self.is_night_mode)
         night_act.setShortcut(QKeySequence("Ctrl+N"))
         night_act.triggered.connect(self.toggle_night_mode)
-        view_menu.addAction(night_act)
+        add_act(view_menu, night_act)
 
         view_menu.addSeparator()
 
         sidebar_act = QAction("📑 Toggle Sidebar", self)
         sidebar_act.setShortcut(QKeySequence("F4"))
         sidebar_act.triggered.connect(self.toggle_sidebar)
-        view_menu.addAction(sidebar_act)
+        add_act(view_menu, sidebar_act)
 
         fs_act = QAction("⛶ Fullscreen", self)
         fs_act.setShortcut(QKeySequence("F11"))
         fs_act.triggered.connect(self.toggle_fullscreen)
-        view_menu.addAction(fs_act)
+        add_act(view_menu, fs_act)
 
         theme_act = QAction("🌓 Toggle Dark / Light Theme", self)
         theme_act.triggered.connect(self.toggle_theme)
-        view_menu.addAction(theme_act)
+        add_act(view_menu, theme_act)
 
         # Go Menu
         go_menu = menubar.addMenu("&Go")
@@ -372,54 +402,54 @@ class ViewerWindow(QMainWindow):
         next_act = QAction("Next Page", self)
         next_act.setShortcut(QKeySequence("PgDown"))
         next_act.triggered.connect(self.pdf_view.next_page)
-        go_menu.addAction(next_act)
+        add_act(go_menu, next_act)
 
         prev_act = QAction("Previous Page", self)
         prev_act.setShortcut(QKeySequence("PgUp"))
         prev_act.triggered.connect(self.pdf_view.prev_page)
-        go_menu.addAction(prev_act)
+        add_act(go_menu, prev_act)
 
         first_act = QAction("First Page", self)
         first_act.setShortcut(QKeySequence("Home"))
         first_act.triggered.connect(self.pdf_view.first_page)
-        go_menu.addAction(first_act)
+        add_act(go_menu, first_act)
 
         last_act = QAction("Last Page", self)
         last_act.setShortcut(QKeySequence("End"))
         last_act.triggered.connect(self.pdf_view.last_page)
-        go_menu.addAction(last_act)
+        add_act(go_menu, last_act)
 
         go_menu.addSeparator()
 
         goto_act = QAction("Go to Page...", self)
         goto_act.setShortcut(QKeySequence("Ctrl+G"))
         goto_act.triggered.connect(self.show_goto_dialog)
-        go_menu.addAction(goto_act)
+        add_act(go_menu, goto_act)
 
         # Tools Menu
         tools_menu = menubar.addMenu("&Tools")
 
         default_app_act = QAction("⚙️ Set as Windows 11 Default PDF Viewer...", self)
         default_app_act.triggered.connect(self.show_default_app_dialog)
-        tools_menu.addAction(default_app_act)
+        add_act(tools_menu, default_app_act)
 
         shortcut_act = QAction("📌 Create Desktop Shortcut", self)
         shortcut_act.triggered.connect(self.create_desktop_shortcut)
-        tools_menu.addAction(shortcut_act)
+        add_act(tools_menu, shortcut_act)
 
         tools_menu.addSeparator()
 
         props_act = QAction("ℹ️ Document Properties...", self)
         props_act.setShortcut(QKeySequence("Ctrl+D"))
         props_act.triggered.connect(self.show_properties_dialog)
-        tools_menu.addAction(props_act)
+        add_act(tools_menu, props_act)
 
         # Help Menu
         help_menu = menubar.addMenu("&Help")
 
         about_act = QAction("About PrincePDF", self)
         about_act.triggered.connect(self.show_about_dialog)
-        help_menu.addAction(about_act)
+        add_act(help_menu, about_act)
 
     # -------------------------------------------------------------------------
     # Toolbar
@@ -909,7 +939,7 @@ class ViewerWindow(QMainWindow):
 
     def toggle_fullscreen(self):
         if self.isFullScreen():
-            self.showNormal()
+            self.showMaximized()
         else:
             self.showFullScreen()
 
@@ -935,3 +965,50 @@ class ViewerWindow(QMainWindow):
                 event.acceptProposedAction()
                 return
         super().dropEvent(event)
+
+    # -------------------------------------------------------------------------
+    # Window State, Frameless Title & Edge Resizing
+    # -------------------------------------------------------------------------
+    def setWindowTitle(self, title: str):
+        super().setWindowTitle(title)
+        if hasattr(self, "custom_title_bar") and self.custom_title_bar:
+            self.custom_title_bar.set_title(title)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            if hasattr(self, "custom_title_bar") and self.custom_title_bar:
+                self.custom_title_bar.update_max_button(self.isMaximized())
+        super().changeEvent(event)
+
+    def nativeEvent(self, eventType, message):
+        if sys.platform == "win32":
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0084:  # WM_NCHITTEST
+                    if self.isMaximized() or self.isFullScreen():
+                        return False, 0
+                    pos = self.mapFromGlobal(QCursor.pos())
+                    gx, gy = pos.x(), pos.y()
+                    w, h = self.width(), self.height()
+                    BORDER, CORNER = 6, 14
+                    # Check corners first
+                    if gx < CORNER and gy < CORNER:
+                        return True, 13  # HTTOPLEFT
+                    if gx >= w - CORNER and gy < CORNER:
+                        return True, 14  # HTTOPRIGHT
+                    if gx < CORNER and gy >= h - CORNER:
+                        return True, 16  # HTBOTTOMLEFT
+                    if gx >= w - CORNER and gy >= h - CORNER:
+                        return True, 17  # HTBOTTOMRIGHT
+                    # Check edges
+                    if gx < BORDER:
+                        return True, 10  # HTLEFT
+                    if gx >= w - BORDER:
+                        return True, 11  # HTRIGHT
+                    if gy < BORDER:
+                        return True, 12  # HTTOP
+                    if gy >= h - BORDER:
+                        return True, 15  # HTBOTTOM
+            except Exception:
+                pass
+        return False, 0
