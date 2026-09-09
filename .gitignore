@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# PyInstaller build outputs & standalone executables
+build/
+dist/
+*.exe
+*.spec.bak
+
+# User configuration & local caches
+.princepdf_config.json
+~/.princepdf_config.json
+
+# Windows thumbnails & desktop metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Environments
+.venv/
+env/
+venv/
+ENV/

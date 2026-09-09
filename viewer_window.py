@@ -1,0 +1,934 @@
+"""
+PrincePDF - Main Application Window
+Integrates document model, high-performance view widget, collapsible sidebar,
+modern toolbar, menu actions, print support, and Windows 11 integration.
+"""
+
+import os
+import sys
+from typing import Optional
+
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import (
+    QAction, QIcon, QKeySequence, QDragEnterEvent, QDropEvent,
+    QPixmap, QPainter
+)
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QToolBar, QToolButton, QComboBox, QLineEdit, QLabel,
+    QFileDialog, QMessageBox, QStatusBar, QStackedWidget,
+    QPushButton, QFrame, QApplication
+)
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+
+from app_config import AppConfig
+from document_model import DocumentModel
+from render_cache import RenderCache
+from pdf_view_widget import PdfViewWidget, ViewMode
+from sidebar_widget import SidebarWidget
+from search_bar import SearchBar
+from dialogs import DocumentPropertiesDialog, GoToPageDialog, WindowsDefaultAppDialog, AboutDialog
+import windows_integration as wi
+import style
+
+
+class WelcomeWidget(QWidget):
+    """Modern drag & drop landing card displayed when no document is open."""
+    def __init__(self, open_callback, recent_callback, parent=None):
+        super().__init__(parent)
+        self.open_callback = open_callback
+        self.recent_callback = recent_callback
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(40, 40, 40, 40)
+
+        card = QFrame(self)
+        card.setFixedWidth(520)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: #20232c;
+                border: 2px dashed #3a3f4d;
+                border-radius: 12px;
+                padding: 30px;
+            }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.setSpacing(16)
+
+        # Icon / Logo
+        png_path = wi.get_png_icon_path()
+        if png_path and os.path.exists(png_path):
+            logo = QLabel(card)
+            dpr = card.devicePixelRatioF() if hasattr(card, "devicePixelRatioF") else 1.0
+            size_px = int(80 * dpr)
+            pix = QPixmap(png_path).scaled(size_px, size_px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            pix.setDevicePixelRatio(dpr)
+            logo.setPixmap(pix)
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(logo)
+
+        # Welcome Text
+        title = QLabel("PrincePDF", card)
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #3b82f6;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(title)
+
+        subtitle = QLabel("Fast, Minimalist & Modern PDF Viewer for Windows 11\nDrag & drop a PDF file here or open from disk", card)
+        subtitle.setStyleSheet("font-size: 13px; color: #94a3b8; text-align: center;")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(subtitle)
+
+        # Open File Button
+        open_btn = QPushButton("📂 Open PDF File", card)
+        open_btn.setFixedHeight(40)
+        open_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: bold;
+                border-radius: 8px;
+                padding: 8px 24px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+        """)
+        open_btn.clicked.connect(self.open_callback)
+        card_layout.addWidget(open_btn)
+
+        # Recent Files Box
+        self.recent_frame = QFrame(card)
+        self.recent_layout = QVBoxLayout(self.recent_frame)
+        self.recent_layout.setContentsMargins(0, 10, 0, 0)
+        self.recent_layout.setSpacing(6)
+        card_layout.addWidget(self.recent_frame)
+
+        layout.addWidget(card)
+        self.refresh_recents()
+
+    def refresh_recents(self):
+        # Clear previous items
+        while self.recent_layout.count():
+            child = self.recent_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        config = AppConfig()
+        recents = config.get_recent_files()
+        if recents:
+            header = QLabel("Recent Documents:")
+            header.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold; text-transform: uppercase;")
+            self.recent_layout.addWidget(header)
+
+            for path in recents[:5]:
+                btn = QPushButton(f"📄 {os.path.basename(path)}")
+                btn.setToolTip(path)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        text-align: left;
+                        background-color: #181a20;
+                        color: #f1f5f9;
+                        border: 1px solid #333846;
+                        border-radius: 5px;
+                        padding: 6px 12px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #2c303c;
+                        border-color: #3b82f6;
+                    }
+                """)
+                btn.clicked.connect(lambda checked, p=path: self.recent_callback(p))
+                self.recent_layout.addWidget(btn)
+
+
+class ViewerWindow(QMainWindow):
+    def __init__(self, initial_filepath: Optional[str] = None):
+        super().__init__()
+        self.config = AppConfig()
+        self.doc_model = DocumentModel()
+        self.render_cache = RenderCache()
+
+        self.current_theme = self.config.get("theme", "dark")
+        self.is_night_mode = self.config.get("night_mode", False)
+
+        self.setWindowTitle("PrincePDF")
+        self.setMinimumSize(800, 600)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
+
+        # Set App Icon
+        icon_path = wi.get_icon_path()
+        if icon_path and os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        # Enable Drag & Drop
+        self.setAcceptDrops(True)
+
+        # Build UI Components
+        self._setup_ui()
+        self._setup_menus()
+        self._setup_toolbar()
+        self._setup_statusbar()
+        self._apply_theme()
+
+        # Connect Search
+        self._search_matches = []
+        self._current_search_idx = -1
+
+        # Load initial file if specified
+        if initial_filepath and os.path.exists(initial_filepath):
+            self.open_file(initial_filepath)
+        else:
+            self._show_welcome()
+
+    # -------------------------------------------------------------------------
+    # UI Setup
+    # -------------------------------------------------------------------------
+    def _setup_ui(self):
+        # Central Splitter: Sidebar + Main Content
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setChildrenCollapsible(False)
+        self.setCentralWidget(self.splitter)
+
+        # Left: Sidebar
+        self.sidebar = SidebarWidget(self.doc_model, self.render_cache, self)
+        self.sidebar.pageSelected.connect(self._on_sidebar_page_selected)
+        self.sidebar.searchResultSelected.connect(self._on_search_result_selected)
+        self.splitter.addWidget(self.sidebar)
+
+        # Right: Main Content Area
+        right_container = QWidget(self)
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        # Inline Search Bar (Hidden by default)
+        self.search_bar = SearchBar(right_container)
+        self.search_bar.hide()
+        self.search_bar.searchRequested.connect(self._on_search_requested)
+        self.search_bar.findNextRequested.connect(self._on_find_next)
+        self.search_bar.findPrevRequested.connect(self._on_find_prev)
+        self.search_bar.closed.connect(self._on_search_closed)
+        right_layout.addWidget(self.search_bar)
+
+        # Stacked Widget: Welcome Card vs PDF Viewer
+        self.stack = QStackedWidget(right_container)
+        self.welcome_view = WelcomeWidget(self.choose_and_open_file, self.open_file, self)
+        self.pdf_view = PdfViewWidget(self.doc_model, self.render_cache, self)
+
+        self.pdf_view.currentPageChanged.connect(self._on_page_changed)
+        self.pdf_view.zoomChanged.connect(self._on_zoom_changed)
+        self.pdf_view.statusMessageRequested.connect(self._show_status_message)
+        self.pdf_view.linkClicked.connect(self._on_link_clicked)
+
+        self.stack.addWidget(self.welcome_view)
+        self.stack.addWidget(self.pdf_view)
+        right_layout.addWidget(self.stack)
+
+        self.splitter.addWidget(right_container)
+        self.splitter.setSizes([260, 940])
+
+    # -------------------------------------------------------------------------
+    # Menus
+    # -------------------------------------------------------------------------
+    def _setup_menus(self):
+        menubar = self.menuBar()
+
+        # File Menu
+        file_menu = menubar.addMenu("&File")
+
+        open_action = QAction("📂 &Open...", self)
+        open_action.setShortcut(QKeySequence("Ctrl+O"))
+        open_action.triggered.connect(self.choose_and_open_file)
+        file_menu.addAction(open_action)
+
+        self.recent_menu = file_menu.addMenu("🕒 Open &Recent")
+        self._update_recent_menu()
+
+        file_menu.addSeparator()
+
+        save_action = QAction("💾 Save &As...", self)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_action.triggered.connect(self.save_as)
+        file_menu.addAction(save_action)
+
+        print_action = QAction("🖨️ &Print...", self)
+        print_action.setShortcut(QKeySequence("Ctrl+P"))
+        print_action.triggered.connect(self.print_document)
+        file_menu.addAction(print_action)
+
+        file_menu.addSeparator()
+
+        close_action = QAction("✕ &Close Document", self)
+        close_action.setShortcut(QKeySequence("Ctrl+W"))
+        close_action.triggered.connect(self.close_document)
+        file_menu.addAction(close_action)
+
+        exit_action = QAction("🚪 E&xit", self)
+        exit_action.setShortcut(QKeySequence("Alt+F4"))
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # Edit Menu
+        edit_menu = menubar.addMenu("&Edit")
+
+        copy_action = QAction("📋 &Copy Text", self)
+        copy_action.setShortcut(QKeySequence("Ctrl+C"))
+        copy_action.triggered.connect(self.pdf_view.copy_current_selection)
+        edit_menu.addAction(copy_action)
+
+        select_all_action = QAction("☑️ &Select All (Page)", self)
+        select_all_action.setShortcut(QKeySequence("Ctrl+A"))
+        select_all_action.triggered.connect(self.pdf_view.select_all_current_page)
+        edit_menu.addAction(select_all_action)
+
+        edit_menu.addSeparator()
+
+        find_action = QAction("🔍 &Find in Document...", self)
+        find_action.setShortcut(QKeySequence("Ctrl+F"))
+        find_action.triggered.connect(self.toggle_search_bar)
+        edit_menu.addAction(find_action)
+
+        # View Menu
+        view_menu = menubar.addMenu("&View")
+
+        # View Modes
+        single_action = QAction("📄 Single Page View", self)
+        single_action.setShortcut(QKeySequence("Ctrl+Alt+1"))
+        single_action.triggered.connect(lambda: self.set_view_mode(ViewMode.SINGLE))
+        view_menu.addAction(single_action)
+
+        continuous_action = QAction("📜 Continuous Scroll View", self)
+        continuous_action.setShortcut(QKeySequence("Ctrl+Alt+2"))
+        continuous_action.triggered.connect(lambda: self.set_view_mode(ViewMode.CONTINUOUS))
+        view_menu.addAction(continuous_action)
+
+        side_action = QAction("📖 Side-by-Side (Spread) View", self)
+        side_action.setShortcut(QKeySequence("Ctrl+Alt+3"))
+        side_action.triggered.connect(lambda: self.set_view_mode(ViewMode.SIDE_BY_SIDE))
+        view_menu.addAction(side_action)
+
+        view_menu.addSeparator()
+
+        zoom_in_act = QAction("➕ Zoom &In", self)
+        zoom_in_act.setShortcut(QKeySequence("Ctrl+="))
+        zoom_in_act.triggered.connect(self.pdf_view.zoom_in)
+        view_menu.addAction(zoom_in_act)
+
+        zoom_out_act = QAction("➖ Zoom &Out", self)
+        zoom_out_act.setShortcut(QKeySequence("Ctrl+-"))
+        zoom_out_act.triggered.connect(self.pdf_view.zoom_out)
+        view_menu.addAction(zoom_out_act)
+
+        zoom_100_act = QAction("100% Actual Size", self)
+        zoom_100_act.setShortcut(QKeySequence("Ctrl+0"))
+        zoom_100_act.triggered.connect(self.pdf_view.reset_zoom)
+        view_menu.addAction(zoom_100_act)
+
+        fit_w_act = QAction("⬌ Fit to &Width", self)
+        fit_w_act.setShortcut(QKeySequence("Ctrl+2"))
+        fit_w_act.triggered.connect(self.pdf_view.set_fit_width)
+        view_menu.addAction(fit_w_act)
+
+        fit_p_act = QAction("⬍ Fit to &Page", self)
+        fit_p_act.setShortcut(QKeySequence("Ctrl+1"))
+        fit_p_act.triggered.connect(self.pdf_view.set_fit_page)
+        view_menu.addAction(fit_p_act)
+
+        view_menu.addSeparator()
+
+        rot_cw_act = QAction("↻ Rotate Clockwise", self)
+        rot_cw_act.setShortcut(QKeySequence("Ctrl+R"))
+        rot_cw_act.triggered.connect(self.pdf_view.rotate_clockwise)
+        view_menu.addAction(rot_cw_act)
+
+        night_act = QAction("🌙 Night Reading Mode", self)
+        night_act.setCheckable(True)
+        night_act.setChecked(self.is_night_mode)
+        night_act.setShortcut(QKeySequence("Ctrl+N"))
+        night_act.triggered.connect(self.toggle_night_mode)
+        view_menu.addAction(night_act)
+
+        view_menu.addSeparator()
+
+        sidebar_act = QAction("📑 Toggle Sidebar", self)
+        sidebar_act.setShortcut(QKeySequence("F4"))
+        sidebar_act.triggered.connect(self.toggle_sidebar)
+        view_menu.addAction(sidebar_act)
+
+        fs_act = QAction("⛶ Fullscreen", self)
+        fs_act.setShortcut(QKeySequence("F11"))
+        fs_act.triggered.connect(self.toggle_fullscreen)
+        view_menu.addAction(fs_act)
+
+        theme_act = QAction("🌓 Toggle Dark / Light Theme", self)
+        theme_act.triggered.connect(self.toggle_theme)
+        view_menu.addAction(theme_act)
+
+        # Go Menu
+        go_menu = menubar.addMenu("&Go")
+
+        next_act = QAction("Next Page", self)
+        next_act.setShortcut(QKeySequence("PgDown"))
+        next_act.triggered.connect(self.pdf_view.next_page)
+        go_menu.addAction(next_act)
+
+        prev_act = QAction("Previous Page", self)
+        prev_act.setShortcut(QKeySequence("PgUp"))
+        prev_act.triggered.connect(self.pdf_view.prev_page)
+        go_menu.addAction(prev_act)
+
+        first_act = QAction("First Page", self)
+        first_act.setShortcut(QKeySequence("Home"))
+        first_act.triggered.connect(self.pdf_view.first_page)
+        go_menu.addAction(first_act)
+
+        last_act = QAction("Last Page", self)
+        last_act.setShortcut(QKeySequence("End"))
+        last_act.triggered.connect(self.pdf_view.last_page)
+        go_menu.addAction(last_act)
+
+        go_menu.addSeparator()
+
+        goto_act = QAction("Go to Page...", self)
+        goto_act.setShortcut(QKeySequence("Ctrl+G"))
+        goto_act.triggered.connect(self.show_goto_dialog)
+        go_menu.addAction(goto_act)
+
+        # Tools Menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        default_app_act = QAction("⚙️ Set as Windows 11 Default PDF Viewer...", self)
+        default_app_act.triggered.connect(self.show_default_app_dialog)
+        tools_menu.addAction(default_app_act)
+
+        shortcut_act = QAction("📌 Create Desktop Shortcut", self)
+        shortcut_act.triggered.connect(self.create_desktop_shortcut)
+        tools_menu.addAction(shortcut_act)
+
+        tools_menu.addSeparator()
+
+        props_act = QAction("ℹ️ Document Properties...", self)
+        props_act.setShortcut(QKeySequence("Ctrl+D"))
+        props_act.triggered.connect(self.show_properties_dialog)
+        tools_menu.addAction(props_act)
+
+        # Help Menu
+        help_menu = menubar.addMenu("&Help")
+
+        about_act = QAction("About PrincePDF", self)
+        about_act.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_act)
+
+    # -------------------------------------------------------------------------
+    # Toolbar
+    # -------------------------------------------------------------------------
+    def _setup_toolbar(self):
+        self.toolbar = QToolBar("Main Controls", self)
+        self.toolbar.setMovable(False)
+        self.toolbar.setIconSize(QSize(20, 20))
+        self.addToolBar(self.toolbar)
+
+        # Sidebar Toggle
+        self.sidebar_btn = QToolButton(self)
+        self.sidebar_btn.setText("📑")
+        self.sidebar_btn.setToolTip("Toggle Sidebar (F4)")
+        self.sidebar_btn.clicked.connect(self.toggle_sidebar)
+        self.toolbar.addWidget(self.sidebar_btn)
+
+        # Open
+        open_btn = QToolButton(self)
+        open_btn.setText("📂 Open")
+        open_btn.setToolTip("Open PDF File (Ctrl+O)")
+        open_btn.clicked.connect(self.choose_and_open_file)
+        self.toolbar.addWidget(open_btn)
+
+        self.toolbar.addSeparator()
+
+        # Page Navigation
+        self.prev_btn = QToolButton(self)
+        self.prev_btn.setText("◀")
+        self.prev_btn.setToolTip("Previous Page (PgUp)")
+        self.prev_btn.clicked.connect(self.pdf_view.prev_page)
+        self.toolbar.addWidget(self.prev_btn)
+
+        self.page_input = QLineEdit(self)
+        self.page_input.setFixedWidth(42)
+        self.page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_input.setText("1")
+        self.page_input.returnPressed.connect(self._on_page_input_entered)
+        self.toolbar.addWidget(self.page_input)
+
+        self.total_pages_lbl = QLabel("/ 0", self)
+        self.total_pages_lbl.setStyleSheet("color: #94a3b8; font-weight: 500; padding: 0 4px;")
+        self.toolbar.addWidget(self.total_pages_lbl)
+
+        self.next_btn = QToolButton(self)
+        self.next_btn.setText("▶")
+        self.next_btn.setToolTip("Next Page (PgDown)")
+        self.next_btn.clicked.connect(self.pdf_view.next_page)
+        self.toolbar.addWidget(self.next_btn)
+
+        self.toolbar.addSeparator()
+
+        # Zoom Controls
+        zoom_out_btn = QToolButton(self)
+        zoom_out_btn.setText("➖")
+        zoom_out_btn.setToolTip("Zoom Out (Ctrl+-)")
+        zoom_out_btn.clicked.connect(self.pdf_view.zoom_out)
+        self.toolbar.addWidget(zoom_out_btn)
+
+        self.zoom_combo = QComboBox(self)
+        self.zoom_combo.setFixedWidth(82)
+        self.zoom_combo.addItems(["50%", "75%", "100%", "125%", "150%", "200%", "300%", "400%"])
+        self.zoom_combo.setCurrentText("100%")
+        self.zoom_combo.currentTextChanged.connect(self._on_zoom_combo_changed)
+        self.toolbar.addWidget(self.zoom_combo)
+
+        zoom_in_btn = QToolButton(self)
+        zoom_in_btn.setText("➕")
+        zoom_in_btn.setToolTip("Zoom In (Ctrl++)")
+        zoom_in_btn.clicked.connect(self.pdf_view.zoom_in)
+        self.toolbar.addWidget(zoom_in_btn)
+
+        fit_w_btn = QToolButton(self)
+        fit_w_btn.setText("⬌ Fit Width")
+        fit_w_btn.setToolTip("Fit to Width (Ctrl+2)")
+        fit_w_btn.clicked.connect(self.pdf_view.set_fit_width)
+        self.toolbar.addWidget(fit_w_btn)
+
+        fit_p_btn = QToolButton(self)
+        fit_p_btn.setText("⬍ Fit Page")
+        fit_p_btn.setToolTip("Fit to Page (Ctrl+1)")
+        fit_p_btn.clicked.connect(self.pdf_view.set_fit_page)
+        self.toolbar.addWidget(fit_p_btn)
+
+        self.toolbar.addSeparator()
+
+        # View Mode Group
+        self.single_mode_btn = QToolButton(self)
+        self.single_mode_btn.setText("📄 Single")
+        self.single_mode_btn.setToolTip("Single Page View (Ctrl+Alt+1)")
+        self.single_mode_btn.setCheckable(True)
+        self.single_mode_btn.clicked.connect(lambda: self.set_view_mode(ViewMode.SINGLE))
+        self.toolbar.addWidget(self.single_mode_btn)
+
+        self.cont_mode_btn = QToolButton(self)
+        self.cont_mode_btn.setText("📜 Continuous")
+        self.cont_mode_btn.setToolTip("Continuous Scroll View (Ctrl+Alt+2)")
+        self.cont_mode_btn.setCheckable(True)
+        self.cont_mode_btn.setChecked(True)
+        self.cont_mode_btn.clicked.connect(lambda: self.set_view_mode(ViewMode.CONTINUOUS))
+        self.toolbar.addWidget(self.cont_mode_btn)
+
+        self.spread_mode_btn = QToolButton(self)
+        self.spread_mode_btn.setText("📖 Spread")
+        self.spread_mode_btn.setToolTip("Side-by-Side (2 Pages) View (Ctrl+Alt+3)")
+        self.spread_mode_btn.setCheckable(True)
+        self.spread_mode_btn.clicked.connect(lambda: self.set_view_mode(ViewMode.SIDE_BY_SIDE))
+        self.toolbar.addWidget(self.spread_mode_btn)
+
+        self.toolbar.addSeparator()
+
+        # Rotate
+        rot_btn = QToolButton(self)
+        rot_btn.setText("↻ Rotate")
+        rot_btn.setToolTip("Rotate Clockwise (Ctrl+R)")
+        rot_btn.clicked.connect(self.pdf_view.rotate_clockwise)
+        self.toolbar.addWidget(rot_btn)
+
+        # Night Mode
+        self.night_btn = QToolButton(self)
+        self.night_btn.setText("🌙 Night")
+        self.night_btn.setToolTip("Invert PDF Colors for Night Reading (Ctrl+N)")
+        self.night_btn.setCheckable(True)
+        self.night_btn.setChecked(self.is_night_mode)
+        self.night_btn.clicked.connect(self.toggle_night_mode)
+        self.toolbar.addWidget(self.night_btn)
+
+        # Search
+        find_btn = QToolButton(self)
+        find_btn.setText("🔍 Find")
+        find_btn.setToolTip("Search in Document (Ctrl+F)")
+        find_btn.clicked.connect(self.toggle_search_bar)
+        self.toolbar.addWidget(find_btn)
+
+        # Spacer to push theme and fullscreen to right
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding, spacer.sizePolicy().verticalPolicy().Preferred)
+        self.toolbar.addWidget(spacer)
+
+        # Theme
+        self.theme_btn = QToolButton(self)
+        self.theme_btn.setText("☀️ Light" if self.current_theme == "dark" else "🌙 Dark")
+        self.theme_btn.setToolTip("Switch Dark / Light Theme")
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        self.toolbar.addWidget(self.theme_btn)
+
+        # Fullscreen
+        fs_btn = QToolButton(self)
+        fs_btn.setText("⛶ Fullscreen")
+        fs_btn.setToolTip("Toggle Fullscreen (F11)")
+        fs_btn.clicked.connect(self.toggle_fullscreen)
+        self.toolbar.addWidget(fs_btn)
+
+    # -------------------------------------------------------------------------
+    # Status Bar
+    # -------------------------------------------------------------------------
+    def _setup_statusbar(self):
+        self.statusbar = QStatusBar(self)
+        self.setStatusBar(self.statusbar)
+
+        self.status_msg_lbl = QLabel("Ready")
+        self.statusbar.addWidget(self.status_msg_lbl, 1)
+
+        self.status_dim_lbl = QLabel("")
+        self.statusbar.addPermanentWidget(self.status_dim_lbl)
+
+        self.status_zoom_lbl = QLabel("100%")
+        self.statusbar.addPermanentWidget(self.status_zoom_lbl)
+
+    # -------------------------------------------------------------------------
+    # Theming
+    # -------------------------------------------------------------------------
+    def _apply_theme(self):
+        sheet = style.get_stylesheet(self.current_theme)
+        self.setStyleSheet(sheet)
+        is_dark = (self.current_theme == "dark")
+        self.pdf_view.set_canvas_theme(is_dark)
+        self.sidebar.set_theme(is_dark)
+        self.search_bar.set_theme(is_dark)
+        self.theme_btn.setText("☀️ Light" if is_dark else "🌙 Dark")
+        self.config.set("theme", self.current_theme)
+
+    def toggle_theme(self):
+        self.current_theme = "light" if self.current_theme == "dark" else "dark"
+        self._apply_theme()
+
+    def toggle_night_mode(self):
+        self.is_night_mode = not self.is_night_mode
+        self.night_btn.setChecked(self.is_night_mode)
+        self.pdf_view.toggle_night_mode(self.is_night_mode)
+        self.config.set("night_mode", self.is_night_mode)
+        mode_str = "Enabled" if self.is_night_mode else "Disabled"
+        self._show_status_message(f"Night reading mode: {mode_str}")
+
+    # -------------------------------------------------------------------------
+    # Document Open / Close / Save
+    # -------------------------------------------------------------------------
+    def choose_and_open_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open PDF Document",
+            "",
+            "PDF Files (*.pdf);;All Files (*.*)"
+        )
+        if path:
+            self.open_file(path)
+
+    def open_file(self, filepath: str):
+        if not os.path.exists(filepath):
+            QMessageBox.warning(self, "Error", f"File does not exist:\n{filepath}")
+            return
+
+        try:
+            self.render_cache.clear()
+            self.doc_model.load(filepath)
+            self.pdf_view.load_document()
+            self.sidebar.load_document()
+
+            self.stack.setCurrentWidget(self.pdf_view)
+            self.setWindowTitle(f"{self.doc_model.file_name} — PrincePDF")
+            self.total_pages_lbl.setText(f"/ {self.doc_model.page_count}")
+            self.page_input.setText("1")
+
+            self.config.add_recent_file(filepath)
+            self._update_recent_menu()
+            self.welcome_view.refresh_recents()
+
+            self._update_dim_label(0)
+            self._show_status_message(f"Loaded {self.doc_model.file_name} ({self.doc_model.file_size_str})")
+        except Exception as e:
+            QMessageBox.critical(self, "Failed to Open PDF", f"Could not load document:\n{e}")
+
+    def close_document(self):
+        self.doc_model.close()
+        self.render_cache.clear()
+        self.pdf_view.clear_pages()
+        self.sidebar.clear()
+        self._show_welcome()
+
+    def _show_welcome(self):
+        self.stack.setCurrentWidget(self.welcome_view)
+        self.setWindowTitle("PrincePDF")
+        self.total_pages_lbl.setText("/ 0")
+        self.page_input.setText("0")
+        self.status_dim_lbl.setText("")
+        self._show_status_message("Welcome to PrincePDF")
+
+    def save_as(self):
+        if not self.doc_model.is_open:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF As", self.doc_model.file_name, "PDF Files (*.pdf)"
+        )
+        if out_path:
+            try:
+                self.doc_model.doc.save(out_path)
+                self._show_status_message(f"Saved copy to {os.path.basename(out_path)}")
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Could not save document:\n{e}")
+
+    def print_document(self):
+        if not self.doc_model.is_open:
+            return
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            self._show_status_message("Printing document...")
+            painter = QPainter(printer)
+            total = self.doc_model.page_count
+
+            first_page = printer.fromPage() if printer.fromPage() > 0 else 1
+            last_page = printer.toPage() if printer.toPage() > 0 else total
+            first_idx = max(0, first_page - 1)
+            last_idx = min(total - 1, last_page - 1)
+
+            for idx in range(first_idx, last_idx + 1):
+                if idx > first_idx:
+                    printer.newPage()
+                page = self.doc_model.get_page(idx)
+                if page:
+                    pix = page.get_pixmap(dpi=300)
+                    qimg = QPixmap.fromImage(pix.samples)
+                    rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+                    painter.drawPixmap(rect.toRect(), qimg)
+
+            painter.end()
+            self._show_status_message("Printing complete!")
+
+    def _update_recent_menu(self):
+        self.recent_menu.clear()
+        recents = self.config.get_recent_files()
+        if not recents:
+            empty_action = QAction("(No recent files)", self)
+            empty_action.setEnabled(False)
+            self.recent_menu.addAction(empty_action)
+            return
+
+        for p in recents:
+            act = QAction(f"📄 {os.path.basename(p)}", self)
+            act.setToolTip(p)
+            act.triggered.connect(lambda checked, path=p: self.open_file(path))
+            self.recent_menu.addAction(act)
+
+        self.recent_menu.addSeparator()
+        clear_act = QAction("Clear Recent Files", self)
+        clear_act.triggered.connect(self._on_clear_recents)
+        self.recent_menu.addAction(clear_act)
+
+    def _on_clear_recents(self):
+        self.config.clear_recent_files()
+        self._update_recent_menu()
+        self.welcome_view.refresh_recents()
+
+    # -------------------------------------------------------------------------
+    # View Modes & Zoom
+    # -------------------------------------------------------------------------
+    def set_view_mode(self, mode: str):
+        self.single_mode_btn.setChecked(mode == ViewMode.SINGLE)
+        self.cont_mode_btn.setChecked(mode == ViewMode.CONTINUOUS)
+        self.spread_mode_btn.setChecked(mode == ViewMode.SIDE_BY_SIDE)
+        self.pdf_view.set_view_mode(mode)
+        self.config.set("view_mode", mode)
+
+    def _on_zoom_changed(self, zoom: float):
+        pct = int(round(zoom * 100))
+        self.zoom_combo.blockSignals(True)
+        self.zoom_combo.setCurrentText(f"{pct}%")
+        self.zoom_combo.blockSignals(False)
+        self.status_zoom_lbl.setText(f"{pct}%")
+
+    def _on_zoom_combo_changed(self, text: str):
+        text = text.replace("%", "").strip()
+        try:
+            val = float(text) / 100.0
+            self.pdf_view.set_zoom(val)
+        except Exception:
+            pass
+
+    # -------------------------------------------------------------------------
+    # Navigation & Page Tracking
+    # -------------------------------------------------------------------------
+    def _on_page_changed(self, page_num: int):
+        self.page_input.setText(str(page_num + 1))
+        self.sidebar.highlight_page(page_num)
+        self._update_dim_label(page_num)
+
+    def _on_page_input_entered(self):
+        try:
+            val = int(self.page_input.text().strip())
+            self.pdf_view.go_to_page(val - 1)
+        except Exception:
+            self.page_input.setText(str(self.pdf_view.current_page + 1))
+
+    def _on_sidebar_page_selected(self, page_num: int):
+        self.pdf_view.go_to_page(page_num)
+
+    def _update_dim_label(self, page_num: int):
+        if not self.doc_model.is_open:
+            self.status_dim_lbl.setText("")
+            return
+        w, h = self.doc_model.get_page_size(page_num, self.pdf_view.rotation)
+        # Check standard sizes (Letter: 612x792, A4: 595x842)
+        label = ""
+        if abs(w - 612) < 2 and abs(h - 792) < 2:
+            label = " (Letter)"
+        elif abs(w - 595) < 2 and abs(h - 842) < 2:
+            label = " (A4)"
+        self.status_dim_lbl.setText(f"{int(w)} × {int(h)} pt{label}")
+
+    def _on_link_clicked(self, link: dict):
+        uri = link.get("uri")
+        if uri:
+            import webbrowser
+            webbrowser.open(uri)
+            self._show_status_message(f"Opened link: {uri}")
+
+    # -------------------------------------------------------------------------
+    # Search Handling
+    # -------------------------------------------------------------------------
+    def toggle_search_bar(self):
+        if self.search_bar.isVisible():
+            self.search_bar.hide_and_clear()
+        else:
+            self.search_bar.show_and_focus()
+
+    def _on_search_requested(self, query: str, match_case: bool):
+        if not self.doc_model.is_open or not query:
+            self.pdf_view.clear_search_highlights()
+            self.search_bar.update_match_count(0, 0)
+            self._search_matches = []
+            self._current_search_idx = -1
+            return
+
+        # Global search
+        results = self.doc_model.search_document(query, match_case)
+        self.sidebar.set_search_results(results)
+
+        # Flatten matches: list of (page_num, rect)
+        self._search_matches = []
+        for r in results:
+            p = r["page"]
+            for rect in r["rects"]:
+                self._search_matches.append((p, rect))
+
+        total = len(self._search_matches)
+        if total > 0:
+            self._current_search_idx = 0
+            self._navigate_to_search_match(0)
+            self.search_bar.update_match_count(0, total)
+        else:
+            self._current_search_idx = -1
+            self.pdf_view.clear_search_highlights()
+            self.search_bar.update_match_count(0, 0)
+
+    def _on_find_next(self):
+        if not self._search_matches:
+            return
+        self._current_search_idx = (self._current_search_idx + 1) % len(self._search_matches)
+        self._navigate_to_search_match(self._current_search_idx)
+        self.search_bar.update_match_count(self._current_search_idx, len(self._search_matches))
+
+    def _on_find_prev(self):
+        if not self._search_matches:
+            return
+        self._current_search_idx = (self._current_search_idx - 1) % len(self._search_matches)
+        self._navigate_to_search_match(self._current_search_idx)
+        self.search_bar.update_match_count(self._current_search_idx, len(self._search_matches))
+
+    def _navigate_to_search_match(self, match_idx: int):
+        if 0 <= match_idx < len(self._search_matches):
+            page_num, rect = self._search_matches[match_idx]
+            self.pdf_view.go_to_page(page_num)
+            # Find all rects on this page for highlighting
+            page_rects = [r for p, r in self._search_matches if p == page_num]
+            self.pdf_view.show_search_matches(page_num, page_rects, active_rect=rect)
+
+    def _on_search_result_selected(self, page_num: int, rect):
+        self.pdf_view.go_to_page(page_num)
+        page_rects = [r for p, r in self._search_matches if p == page_num]
+        self.pdf_view.show_search_matches(page_num, page_rects, active_rect=rect)
+
+    def _on_search_closed(self):
+        self.pdf_view.clear_search_highlights()
+
+    # -------------------------------------------------------------------------
+    # Dialogs & Windows Integration
+    # -------------------------------------------------------------------------
+    def show_properties_dialog(self):
+        if not self.doc_model.is_open:
+            QMessageBox.information(self, "No Document", "Please open a PDF document first.")
+            return
+        meta = self.doc_model.get_metadata()
+        dlg = DocumentPropertiesDialog(meta, self)
+        dlg.exec()
+
+    def show_goto_dialog(self):
+        if not self.doc_model.is_open:
+            return
+        dlg = GoToPageDialog(self.pdf_view.current_page, self.doc_model.page_count, self)
+        if dlg.exec() == GoToPageDialog.DialogCode.Accepted:
+            self.pdf_view.go_to_page(dlg.get_selected_page())
+
+    def show_default_app_dialog(self):
+        current_file = self.doc_model.filepath or ""
+        dlg = WindowsDefaultAppDialog(current_file, self)
+        dlg.exec()
+
+    def create_desktop_shortcut(self):
+        ok, msg = wi.create_desktop_shortcut()
+        if ok:
+            QMessageBox.information(self, "Shortcut Created", "PrincePDF desktop shortcut created successfully!")
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to create shortcut: {msg}")
+
+    def show_about_dialog(self):
+        dlg = AboutDialog(self)
+        dlg.exec()
+
+    def toggle_sidebar(self):
+        self.sidebar.setVisible(not self.sidebar.isVisible())
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _show_status_message(self, text: str):
+        self.status_msg_lbl.setText(text)
+
+    # -------------------------------------------------------------------------
+    # Drag and Drop
+    # -------------------------------------------------------------------------
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().lower().endswith(".pdf"):
+                    event.acceptProposedAction()
+                    return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        for url in event.mimeData().urls():
+            filepath = url.toLocalFile()
+            if filepath.lower().endswith(".pdf"):
+                self.open_file(filepath)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
