@@ -26,6 +26,13 @@ def get_pythonw_path() -> str:
     return exe
 
 
+def get_main_script_path() -> str:
+    """Returns absolute path to main.py script."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(current_dir, "main.py")
+
+
+
 def get_executable_path() -> str:
     """Returns path to fastest PrincePDF.exe if available, otherwise pythonw.exe."""
     if getattr(sys, "frozen", False):

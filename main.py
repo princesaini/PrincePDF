@@ -16,6 +16,12 @@ import windows_integration as wi
 
 
 def main():
+    if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     # 1. Set Windows 11 AppUserModelID so taskbar displays app icon properly
     if sys.platform == "win32":
         try:
@@ -48,7 +54,11 @@ def main():
         arg = sys.argv[1]
         if arg == "--register":
             ok, msg = wi.register_windows_file_association()
-            print(msg)
+            if sys.stdout:
+                try:
+                    print(msg)
+                except Exception:
+                    pass
             sys.exit(0 if ok else 1)
         elif os.path.exists(arg) and arg.lower().endswith(".pdf"):
             initial_file = os.path.abspath(arg)
@@ -61,7 +71,10 @@ def main():
     app.setStyleSheet(style.get_stylesheet(theme))
 
     window = ViewerWindow(initial_filepath=initial_file)
-    window.showMaximized()
+    if not config.get("window_maximized", True) and config.get("window_geometry"):
+        window.showNormal()
+    else:
+        window.showMaximized()
 
     # Defer registry checks so window appears on screen with 0 startup delay
     from PyQt6.QtCore import QTimer

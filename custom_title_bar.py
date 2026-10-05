@@ -65,7 +65,7 @@ class CustomTitleBar(QWidget):
         btn_box.setContentsMargins(0, 0, 0, 0)
 
         # Minimize Button
-        self.min_btn = QPushButton("—", self)
+        self.min_btn = QPushButton("\uE921", self)
         self.min_btn.setFixedSize(46, 36)
         self.min_btn.setObjectName("TitleBtn")
         self.min_btn.setToolTip("Minimize")
@@ -74,7 +74,7 @@ class CustomTitleBar(QWidget):
         btn_box.addWidget(self.min_btn)
 
         # Maximize / Restore Button
-        self.max_btn = QPushButton("🗗" if self.parent_window.isMaximized() else "🗖", self)
+        self.max_btn = QPushButton("\uE923" if self.parent_window.isMaximized() else "\uE922", self)
         self.max_btn.setFixedSize(46, 36)
         self.max_btn.setObjectName("TitleBtn")
         self.max_btn.setToolTip("Restore Down" if self.parent_window.isMaximized() else "Maximize")
@@ -83,7 +83,7 @@ class CustomTitleBar(QWidget):
         btn_box.addWidget(self.max_btn)
 
         # Close Button
-        self.close_btn = QPushButton("✕", self)
+        self.close_btn = QPushButton("\uE8BB", self)
         self.close_btn.setFixedSize(46, 36)
         self.close_btn.setObjectName("CloseBtn")
         self.close_btn.setToolTip("Close (Alt+F4)")
@@ -115,10 +115,10 @@ class CustomTitleBar(QWidget):
     def update_max_button(self, is_maximized: bool):
         """Updates the maximize/restore button icon and tooltip based on state."""
         if is_maximized:
-            self.max_btn.setText("🗗")
+            self.max_btn.setText("\uE923")
             self.max_btn.setToolTip("Restore Down")
         else:
-            self.max_btn.setText("🗖")
+            self.max_btn.setText("\uE922")
             self.max_btn.setToolTip("Maximize")
 
     def _toggle_maximize(self):

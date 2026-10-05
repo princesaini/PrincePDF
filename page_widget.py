@@ -9,7 +9,7 @@ import fitz
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QPixmap, QCursor,
-    QMouseEvent, QContextMenuEvent, QAction, QPainterPath
+    QMouseEvent, QContextMenuEvent, QAction, QPainterPath, QKeyEvent
 )
 from PyQt6.QtWidgets import QWidget, QMenu, QApplication
 
@@ -59,11 +59,19 @@ class PdfPageWidget(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._update_geometry()
 
+    def _get_page_matrix(self) -> Tuple[fitz.Matrix, float, float]:
+        page = self.doc_model.get_page(self.page_num)
+        page_rect = page.rect if page else fitz.Rect(0, 0, 612, 792)
+        mat = fitz.Matrix(self.zoom, self.zoom).prerotate(self.rotation)
+        irect = (page_rect * mat).round()
+        return mat, float(irect.x0), float(irect.y0)
+
     def _update_geometry(self):
-        w_pts, h_pts = self.doc_model.get_page_size(self.page_num, self.rotation)
-        display_w = int(w_pts * self.zoom)
-        display_h = int(h_pts * self.zoom)
-        self.setFixedSize(display_w, display_h)
+        mat, pix_x, pix_y = self._get_page_matrix()
+        page = self.doc_model.get_page(self.page_num)
+        page_rect = page.rect if page else fitz.Rect(0, 0, 612, 792)
+        irect = (page_rect * mat).round()
+        self.setFixedSize(irect.width, irect.height)
 
     def set_display_params(self, zoom: float, rotation: int, night_mode: bool, dpr: float):
         changed = (
@@ -115,16 +123,14 @@ class PdfPageWidget(QWidget):
         return text
 
     def _ensure_pixmap(self) -> Optional[QPixmap]:
-        if self._pixmap is None or self._pixmap.isNull():
-            self._pixmap = self.render_cache.get_pixmap(
-                self.doc_model,
-                self.page_num,
-                self.zoom,
-                self.rotation,
-                self.night_mode,
-                self.dpr
-            )
-        return self._pixmap
+        return self.render_cache.get_pixmap(
+            self.doc_model,
+            self.page_num,
+            self.zoom,
+            self.rotation,
+            self.night_mode,
+            self.dpr
+        )
 
     def _ensure_links(self):
         if not self._links:
@@ -134,19 +140,19 @@ class PdfPageWidget(QWidget):
     # Coordinate transforms
     # -------------------------------------------------------------------------
     def _widget_to_pdf_point(self, pt: QPointF) -> QPointF:
-        """Converts widget pixel coords to PDF point coords (unrotated)."""
-        scale = max(0.001, self.zoom)
-        return QPointF(pt.x() / scale, pt.y() / scale)
+        """Converts widget pixel coords to PDF point coords respecting rotation and zoom."""
+        mat, pix_x, pix_y = self._get_page_matrix()
+        inv_mat = ~mat
+        pdf_pt = (fitz.Point(pt.x(), pt.y()) + (pix_x, pix_y)) * inv_mat
+        return QPointF(pdf_pt.x, pdf_pt.y)
 
     def _pdf_rect_to_widget_rect(self, rect: fitz.Rect) -> QRectF:
-        """Converts fitz.Rect in PDF points to QRectF in widget pixel coords."""
-        scale = self.zoom
-        return QRectF(
-            rect.x0 * scale,
-            rect.y0 * scale,
-            rect.width * scale,
-            rect.height * scale
-        )
+        """Converts fitz.Rect in PDF points to QRectF in widget pixel coords respecting rotation."""
+        mat, pix_x, pix_y = self._get_page_matrix()
+        t_rect = (rect * mat) + (-pix_x, -pix_y, -pix_x, -pix_y)
+        t_rect.normalize()
+        return QRectF(t_rect.x0, t_rect.y0, t_rect.width, t_rect.height)
+
 
     # -------------------------------------------------------------------------
     # Painting
@@ -306,6 +312,31 @@ class PdfPageWidget(QWidget):
             if w_rect.contains(fitz.Point(p2.x(), p2.y())):
                 end_word_idx = idx
 
+        # If points fell slightly in between words or margins, snap to closest word
+        if start_word_idx == -1:
+            best_d = 20.0
+            pt1 = fitz.Point(p1.x(), p1.y())
+            for idx, w in enumerate(words):
+                w_rect = fitz.Rect(w[0], w[1], w[2], w[3])
+                dx = max(0.0, w_rect.x0 - pt1.x, pt1.x - w_rect.x1)
+                dy = max(0.0, w_rect.y0 - pt1.y, pt1.y - w_rect.y1)
+                d = dx + dy
+                if d < best_d:
+                    best_d = d
+                    start_word_idx = idx
+
+        if end_word_idx == -1:
+            best_d = 20.0
+            pt2 = fitz.Point(p2.x(), p2.y())
+            for idx, w in enumerate(words):
+                w_rect = fitz.Rect(w[0], w[1], w[2], w[3])
+                dx = max(0.0, w_rect.x0 - pt2.x, pt2.x - w_rect.x1)
+                dy = max(0.0, w_rect.y0 - pt2.y, pt2.y - w_rect.y1)
+                d = dx + dy
+                if d < best_d:
+                    best_d = d
+                    end_word_idx = idx
+
         new_selected: Set[int] = set()
 
         if start_word_idx != -1 and end_word_idx != -1:
@@ -354,32 +385,28 @@ class PdfPageWidget(QWidget):
         self._selected_text = "\n".join(lines)
 
     # -------------------------------------------------------------------------
-    # Context Menu
+    # Keyboard & Context Menu
     # -------------------------------------------------------------------------
+    def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            if key == Qt.Key.Key_C:
+                self.copy_selection()
+                event.accept()
+                return
+            elif key == Qt.Key.Key_A:
+                self.select_all()
+                event.accept()
+                return
+        elif key == Qt.Key.Key_Escape:
+            self.clear_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def contextMenuEvent(self, event: QContextMenuEvent):
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #242730;
-                color: #f1f5f9;
-                border: 1px solid #3a3f4d;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 20px 6px 12px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #3b82f6;
-                color: #ffffff;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: #3a3f4d;
-                margin: 4px 8px;
-            }
-        """)
 
         copy_action = menu.addAction("Copy (Ctrl+C)")
         copy_action.setEnabled(bool(self._selected_text))
@@ -394,3 +421,4 @@ class PdfPageWidget(QWidget):
         copy_all_action.triggered.connect(self.copy_all_page_text)
 
         menu.exec(event.globalPos())
+

@@ -159,7 +159,13 @@ class ViewerWindow(QMainWindow):
         # Frameless Window for modern Windows 11 look
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setMinimumSize(800, 600)
-        self.setWindowState(Qt.WindowState.WindowMaximized)
+
+        # Restore window geometry and state
+        saved_geom = self.config.get("window_geometry")
+        if saved_geom and len(saved_geom) == 4:
+            self.setGeometry(*saved_geom)
+        if self.config.get("window_maximized", True):
+            self.setWindowState(Qt.WindowState.WindowMaximized)
 
         # Enable Windows 11 DWM shadow and rounded corners
         if sys.platform == "win32":
@@ -196,6 +202,12 @@ class ViewerWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_statusbar()
         self._apply_theme()
+
+        # Restore user preferences
+        saved_mode = self.config.get("view_mode", ViewMode.CONTINUOUS)
+        self.set_view_mode(saved_mode)
+        sidebar_vis = self.config.get("sidebar_visible", True)
+        self.sidebar.setVisible(sidebar_vis)
 
         # Connect Search
         self._search_matches = []
@@ -320,6 +332,16 @@ class ViewerWindow(QMainWindow):
         find_action.triggered.connect(self.toggle_search_bar)
         add_act(edit_menu, find_action)
 
+        find_next_action = QAction("Find Next", self)
+        find_next_action.setShortcut(QKeySequence("F3"))
+        find_next_action.triggered.connect(self._on_find_next)
+        add_act(edit_menu, find_next_action)
+
+        find_prev_action = QAction("Find Previous", self)
+        find_prev_action.setShortcut(QKeySequence("Shift+F3"))
+        find_prev_action.triggered.connect(self._on_find_prev)
+        add_act(edit_menu, find_prev_action)
+
         # View Menu
         view_menu = menubar.addMenu("&View")
 
@@ -370,8 +392,13 @@ class ViewerWindow(QMainWindow):
 
         rot_cw_act = QAction("↻ Rotate Clockwise", self)
         rot_cw_act.setShortcut(QKeySequence("Ctrl+R"))
-        rot_cw_act.triggered.connect(self.pdf_view.rotate_clockwise)
+        rot_cw_act.triggered.connect(self.rotate_clockwise)
         add_act(view_menu, rot_cw_act)
+
+        rot_ccw_act = QAction("↺ Rotate Counter-Clockwise", self)
+        rot_ccw_act.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        rot_ccw_act.triggered.connect(self.rotate_counter_clockwise)
+        add_act(view_menu, rot_ccw_act)
 
         night_act = QAction("🌙 Night Reading Mode", self)
         night_act.setCheckable(True)
@@ -511,6 +538,10 @@ class ViewerWindow(QMainWindow):
 
         self.zoom_combo = QComboBox(self)
         self.zoom_combo.setFixedWidth(82)
+        self.zoom_combo.setEditable(True)
+        if self.zoom_combo.lineEdit():
+            self.zoom_combo.lineEdit().setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.zoom_combo.lineEdit().returnPressed.connect(self._on_zoom_combo_entered)
         self.zoom_combo.addItems(["50%", "75%", "100%", "125%", "150%", "200%", "300%", "400%"])
         self.zoom_combo.setCurrentText("100%")
         self.zoom_combo.currentTextChanged.connect(self._on_zoom_combo_changed)
@@ -565,7 +596,7 @@ class ViewerWindow(QMainWindow):
         rot_btn = QToolButton(self)
         rot_btn.setText("↻ Rotate")
         rot_btn.setToolTip("Rotate Clockwise (Ctrl+R)")
-        rot_btn.clicked.connect(self.pdf_view.rotate_clockwise)
+        rot_btn.clicked.connect(self.rotate_clockwise)
         self.toolbar.addWidget(rot_btn)
 
         # Night Mode
@@ -665,11 +696,28 @@ class ViewerWindow(QMainWindow):
         try:
             self.render_cache.clear()
             self.doc_model.load(filepath)
+
+            if self.doc_model.doc and self.doc_model.doc.needs_pass:
+                from PyQt6.QtWidgets import QInputDialog
+                pwd, ok = QInputDialog.getText(
+                    self, "Password Protected PDF",
+                    f"'{os.path.basename(filepath)}' is password protected.\nEnter Password:",
+                    QLineEdit.EchoMode.Password
+                )
+                if ok and pwd:
+                    if not self.doc_model.doc.authenticate(pwd):
+                        QMessageBox.warning(self, "Invalid Password", "Incorrect password for document.")
+                        self.close_document()
+                        return
+                else:
+                    self.close_document()
+                    return
+
             self.pdf_view.load_document()
             self.sidebar.load_document()
 
             self.stack.setCurrentWidget(self.pdf_view)
-            self.setWindowTitle(f"{self.doc_model.file_name} — PrincePDF")
+            self.setWindowTitle(f"{self.doc_model.file_name} - PrincePDF")
             self.total_pages_lbl.setText(f"/ {self.doc_model.page_count}")
             self.page_input.setText("1")
 
@@ -715,6 +763,7 @@ class ViewerWindow(QMainWindow):
             return
 
         from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+        from PyQt6.QtGui import QImage
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
         dialog = QPrintDialog(printer, self)
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
@@ -733,9 +782,16 @@ class ViewerWindow(QMainWindow):
                 page = self.doc_model.get_page(idx)
                 if page:
                     pix = page.get_pixmap(dpi=300)
-                    qimg = QPixmap.fromImage(pix.samples)
-                    rect = printer.pageRect(QPrinter.Unit.DevicePixel)
-                    painter.drawPixmap(rect.toRect(), qimg)
+                    qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+                    target_rect = printer.pageRect(QPrinter.Unit.DevicePixel).toRect()
+                    scaled_img = qimg.scaled(
+                        target_rect.size(),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    x = target_rect.x() + (target_rect.width() - scaled_img.width()) // 2
+                    y = target_rect.y() + (target_rect.height() - scaled_img.height()) // 2
+                    painter.drawImage(x, y, scaled_img)
 
             painter.end()
             self._show_status_message("Printing complete!")
@@ -789,6 +845,25 @@ class ViewerWindow(QMainWindow):
             self.pdf_view.set_zoom(val)
         except Exception:
             pass
+
+    def _on_zoom_combo_entered(self):
+        text = self.zoom_combo.currentText().replace("%", "").strip()
+        try:
+            val = float(text) / 100.0
+            self.pdf_view.set_zoom(val)
+        except Exception:
+            pass
+
+    def rotate_clockwise(self):
+        self.pdf_view.rotate_clockwise()
+        self.sidebar.set_rotation(self.pdf_view.rotation)
+        self._update_dim_label(self.pdf_view.current_page)
+
+    def rotate_counter_clockwise(self):
+        self.pdf_view.rotate_counter_clockwise()
+        self.sidebar.set_rotation(self.pdf_view.rotation)
+        self._update_dim_label(self.pdf_view.current_page)
+
 
     # -------------------------------------------------------------------------
     # Navigation & Page Tracking
@@ -883,13 +958,13 @@ class ViewerWindow(QMainWindow):
     def _navigate_to_search_match(self, match_idx: int):
         if 0 <= match_idx < len(self._search_matches):
             page_num, rect = self._search_matches[match_idx]
-            self.pdf_view.go_to_page(page_num)
+            self.pdf_view.scroll_to_rect(page_num, rect)
             # Find all rects on this page for highlighting
             page_rects = [r for p, r in self._search_matches if p == page_num]
             self.pdf_view.show_search_matches(page_num, page_rects, active_rect=rect)
 
     def _on_search_result_selected(self, page_num: int, rect):
-        self.pdf_view.go_to_page(page_num)
+        self.pdf_view.scroll_to_rect(page_num, rect)
         page_rects = [r for p, r in self._search_matches if p == page_num]
         self.pdf_view.show_search_matches(page_num, page_rects, active_rect=rect)
 
@@ -957,6 +1032,9 @@ class ViewerWindow(QMainWindow):
                     return
         super().dragEnterEvent(event)
 
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+
     def dropEvent(self, event: QDropEvent):
         for url in event.mimeData().urls():
             filepath = url.toLocalFile()
@@ -965,6 +1043,27 @@ class ViewerWindow(QMainWindow):
                 event.acceptProposedAction()
                 return
         super().dropEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.isFullScreen():
+            self.showMaximized()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        try:
+            self.config.set("sidebar_visible", self.sidebar.isVisible())
+            self.config.set("view_mode", self.pdf_view.view_mode)
+            self.config.set("night_mode", self.is_night_mode)
+            self.config.set("window_maximized", self.isMaximized())
+            if not self.isMaximized() and not self.isFullScreen():
+                geom = self.geometry()
+                self.config.set("window_geometry", [geom.x(), geom.y(), geom.width(), geom.height()])
+        except Exception:
+            pass
+        self.doc_model.close()
+        super().closeEvent(event)
 
     # -------------------------------------------------------------------------
     # Window State, Frameless Title & Edge Resizing
@@ -1012,3 +1111,4 @@ class ViewerWindow(QMainWindow):
             except Exception:
                 pass
         return False, 0
+

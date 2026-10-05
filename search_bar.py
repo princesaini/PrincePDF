@@ -3,7 +3,7 @@ PrincePDF - Modern Floating / Inline Search Bar
 Provides quick in-document search with match counts, next/prev navigation, and match case.
 """
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLineEdit, QPushButton, QLabel, QCheckBox
@@ -21,6 +21,12 @@ class SearchBar(QFrame):
         self.setObjectName("SearchBarFrame")
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
+        # Debounce timer for smooth typing without lag
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(150)
+        self._debounce_timer.timeout.connect(self._emit_search)
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(8)
@@ -31,7 +37,7 @@ class SearchBar(QFrame):
         self.input_field.setClearButtonEnabled(True)
         self.input_field.setMinimumWidth(200)
         self.input_field.textChanged.connect(self._on_text_changed)
-        self.input_field.returnPressed.connect(self._on_enter_pressed)
+        self.input_field.installEventFilter(self)
         layout.addWidget(self.input_field)
 
         # Match Count Label
@@ -191,11 +197,31 @@ class SearchBar(QFrame):
 
     def _on_text_changed(self):
         query = self.input_field.text().strip()
+        if not query:
+            self._debounce_timer.stop()
+            self._emit_search()
+        else:
+            self._debounce_timer.start()
+
+    def _emit_search(self):
+        query = self.input_field.text().strip()
         match_case = self.case_checkbox.isChecked()
         self.searchRequested.emit(query, match_case)
 
-    def _on_enter_pressed(self):
-        self.findNextRequested.emit()
+    def eventFilter(self, obj, event):
+        if obj == self.input_field and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._debounce_timer.stop()
+                self._emit_search()
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    self.findPrevRequested.emit()
+                else:
+                    self.findNextRequested.emit()
+                return True
+            elif event.key() == Qt.Key.Key_Escape:
+                self.hide_and_clear()
+                return True
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Escape:
@@ -203,3 +229,4 @@ class SearchBar(QFrame):
             event.accept()
             return
         super().keyPressEvent(event)
+

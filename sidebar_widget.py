@@ -22,6 +22,8 @@ class ThumbnailItemWidget(QWidget):
     def __init__(self, page_num: int, parent=None):
         super().__init__(parent)
         self.page_num = page_num
+        self.is_dark = True
+        self._active = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -41,13 +43,21 @@ class ThumbnailItemWidget(QWidget):
     def set_pixmap(self, pixmap: QPixmap):
         self.image_label.setPixmap(pixmap)
 
+    def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
+        self.set_active(self._active)
+
     def set_active(self, active: bool):
+        self._active = active
+        bg = "#2c303c" if self.is_dark else "#f1f5f9"
+        border_inactive = "#3a3f4d" if self.is_dark else "#cbd5e1"
+        num_inactive = "#94a3b8" if self.is_dark else "#64748b"
         if active:
-            self.image_label.setStyleSheet("border: 2px solid #3b82f6; border-radius: 4px; background: #2c303c;")
+            self.image_label.setStyleSheet(f"border: 2px solid #3b82f6; border-radius: 4px; background: {bg};")
             self.num_label.setStyleSheet("color: #3b82f6; font-size: 11px; font-weight: bold;")
         else:
-            self.image_label.setStyleSheet("border: 1px solid #3a3f4d; border-radius: 4px; background: #2c303c;")
-            self.num_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+            self.image_label.setStyleSheet(f"border: 1px solid {border_inactive}; border-radius: 4px; background: {bg};")
+            self.num_label.setStyleSheet(f"color: {num_inactive}; font-size: 11px;")
 
 
 class SidebarWidget(QWidget):
@@ -58,6 +68,8 @@ class SidebarWidget(QWidget):
         super().__init__(parent)
         self.doc_model = doc_model
         self.render_cache = render_cache
+        self.rotation: int = 0
+        self.is_dark: bool = True
 
         self.setMinimumWidth(220)
         self.setMaximumWidth(320)
@@ -143,7 +155,16 @@ class SidebarWidget(QWidget):
         """)
 
     def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
         self._apply_styling(is_dark)
+        for card in self._thumbnail_widgets:
+            card.set_theme(is_dark)
+
+    def set_rotation(self, rotation: int):
+        if self.rotation != rotation:
+            self.rotation = rotation
+            if self.doc_model.is_open:
+                self._build_thumbnails()
 
     # -------------------------------------------------------------------------
     # Document Loading
@@ -175,9 +196,10 @@ class SidebarWidget(QWidget):
         for p_idx in range(self.doc_model.page_count):
             item = QListWidgetItem(self.thumb_list)
             card = ThumbnailItemWidget(p_idx, self)
+            card.set_theme(self.is_dark)
 
             # Compute size hint based on aspect ratio
-            w, h = self.doc_model.get_page_size(p_idx)
+            w, h = self.doc_model.get_page_size(p_idx, self.rotation)
             ratio = h / max(1.0, w)
             card_h = int(130 * ratio) + 34
             item.setSizeHint(QSize(160, card_h))
@@ -190,7 +212,9 @@ class SidebarWidget(QWidget):
         initial_count = min(3, len(self._pending_thumb_indices))
         for _ in range(initial_count):
             p_idx = self._pending_thumb_indices.pop(0)
-            pixmap = self.render_cache.get_thumbnail(self.doc_model, p_idx, max_width=130, dpr=dpr)
+            pixmap = self.render_cache.get_thumbnail(
+                self.doc_model, p_idx, max_width=130, rotation=self.rotation, dpr=dpr
+            )
             if pixmap and p_idx < len(self._thumbnail_widgets):
                 self._thumbnail_widgets[p_idx].set_pixmap(pixmap)
 
@@ -209,7 +233,9 @@ class SidebarWidget(QWidget):
 
         for p_idx in batch:
             if p_idx < len(self._thumbnail_widgets):
-                pixmap = self.render_cache.get_thumbnail(self.doc_model, p_idx, max_width=130, dpr=dpr)
+                pixmap = self.render_cache.get_thumbnail(
+                    self.doc_model, p_idx, max_width=130, rotation=self.rotation, dpr=dpr
+                )
                 if pixmap:
                     self._thumbnail_widgets[p_idx].set_pixmap(pixmap)
 
@@ -226,7 +252,9 @@ class SidebarWidget(QWidget):
             card = self._thumbnail_widgets[page_num]
             if card.image_label.pixmap().isNull() if card.image_label.pixmap() else True:
                 dpr = self.devicePixelRatioF()
-                pixmap = self.render_cache.get_thumbnail(self.doc_model, page_num, max_width=130, dpr=dpr)
+                pixmap = self.render_cache.get_thumbnail(
+                    self.doc_model, page_num, max_width=130, rotation=self.rotation, dpr=dpr
+                )
                 if pixmap:
                     card.set_pixmap(pixmap)
 

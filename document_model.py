@@ -84,6 +84,16 @@ class DocumentModel:
         if not self.is_open:
             return {}
         meta = self.doc.metadata or {}
+        page_size_str = "N/A"
+        if self._page_count > 0:
+            w, h = self.get_page_size(0)
+            label = ""
+            if abs(w - 612) < 2 and abs(h - 792) < 2:
+                label = " (Letter)"
+            elif abs(w - 595) < 2 and abs(h - 842) < 2:
+                label = " (A4)"
+            page_size_str = f"{int(w)} × {int(h)} pt{label}"
+
         return {
             "Title": meta.get("title") or self.file_name,
             "Author": meta.get("author") or "N/A",
@@ -95,6 +105,7 @@ class DocumentModel:
             "ModDate": meta.get("modDate") or "N/A",
             "Format": meta.get("format") or "PDF",
             "Pages": self._page_count,
+            "Page Size": page_size_str,
             "File Size": self.file_size_str,
             "File Path": self.filepath or "N/A",
         }

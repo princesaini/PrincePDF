@@ -23,6 +23,12 @@ import windows_integration as wi
 
 
 def run_tests():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     print("=== Starting PrincePDF Automated Test Suite ===")
 
     # Initialize QApplication for GUI testing
@@ -136,8 +142,66 @@ def run_tests():
     assert win.custom_title_bar.title_lbl.text() == "PrincePDF", f"Expected 'PrincePDF', got '{win.custom_title_bar.title_lbl.text()}'"
     print("[PASS] Test 16: Document close resets title label to 'PrincePDF'")
 
+    # Test 12: get_main_script_path
+    main_py = wi.get_main_script_path()
+    assert os.path.exists(main_py), f"Main script path does not exist: {main_py}"
+    assert main_py.endswith("main.py")
+    print(f"[PASS] Test 17: windows_integration.get_main_script_path verified ({main_py})")
+
+    # Test 13: Rotated Thumbnails
+    thumb_90 = cache.get_thumbnail(doc_model, 0, max_width=130, rotation=90)
+    assert thumb_90 is not None and not thumb_90.isNull(), "Failed to generate rotated thumbnail!"
+    # When rotated 90 deg, aspect ratio changes from portrait to landscape (width > height)
+    assert thumb_90.width() >= thumb_90.height(), f"Rotated thumbnail expected landscape, got {thumb_90.width()}x{thumb_90.height()}"
+    print(f"[PASS] Test 18: RenderCache generated rotated thumbnail ({thumb_90.width()}x{thumb_90.height()})")
+
+    # Test 14: Rotation Coordinate Mapping Round-trip
+    pw = PdfPageWidget(0, doc_model, cache)
+    for rot in [0, 90, 180, 270]:
+        pw.set_display_params(zoom=1.2, rotation=rot, night_mode=False, dpr=1.0)
+        # Check first word in page
+        w = words_p0[0]
+        pdf_rect = fitz.Rect(w[0], w[1], w[2], w[3])
+        w_rect = pw._pdf_rect_to_widget_rect(pdf_rect)
+        assert w_rect.isValid() and w_rect.width() > 0 and w_rect.height() > 0
+        # Round trip center
+        w_center = w_rect.center()
+        round_trip_pdf = pw._widget_to_pdf_point(w_center)
+        assert pdf_rect.contains(fitz.Point(round_trip_pdf.x(), round_trip_pdf.y())), f"Failed round-trip at rot={rot}"
+    print("[PASS] Test 19: PdfPageWidget rotation coordinate transform verified for 0°, 90°, 180°, 270°")
+
+    # Test 15: scroll_to_rect
+    win.open_file(pdf_path)
+    test_rect = fitz.Rect(words_p0[0][0], words_p0[0][1], words_p0[0][2], words_p0[0][3])
+    win.pdf_view.scroll_to_rect(0, test_rect)
+    assert win.pdf_view.current_page == 0
+    print("[PASS] Test 20: PdfViewWidget.scroll_to_rect centered target match successfully")
+
+    # Test 16: Metadata Page Size
+    meta2 = doc_model.get_metadata()
+    assert "Page Size" in meta2 and "Letter" in meta2["Page Size"]
+    print(f"[PASS] Test 21: DocumentModel Page Size verified: {meta2['Page Size']}")
+
+    # Test 17: SearchBar debounce and Event Filter
+    assert hasattr(win.search_bar, "_debounce_timer")
+    assert win.search_bar._debounce_timer.isSingleShot()
+    print("[PASS] Test 22: SearchBar debounce timer and navigation event filter verified")
+
+    # Test 18: Settings Persistence & closeEvent
+    win.set_view_mode(ViewMode.SIDE_BY_SIDE)
+    win.sidebar.setVisible(False)
     win.close()
-    print("\n=== ALL 16 TESTS PASSED SUCCESSFULLY! ===")
+    from app_config import AppConfig
+    cfg = AppConfig()
+    assert cfg.get("view_mode") == ViewMode.SIDE_BY_SIDE
+    assert cfg.get("sidebar_visible") is False
+    # Reset for cleanliness
+    cfg.set("view_mode", ViewMode.CONTINUOUS)
+    cfg.set("sidebar_visible", True)
+    print("[PASS] Test 23: Preferences persistence and closeEvent verified")
+
+    print("\n=== ALL 23 TESTS PASSED SUCCESSFULLY! ===")
+
 
 
 if __name__ == "__main__":

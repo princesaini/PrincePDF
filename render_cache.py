@@ -76,7 +76,7 @@ class RenderCache(QObject):
             pix = page.get_pixmap(matrix=mat, alpha=False)
             if night_mode:
                 pix.invert_irect(pix.irect)
-            qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+            qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
             qimg.setDevicePixelRatio(dpr)
             pixmap = QPixmap.fromImage(qimg)
 
@@ -89,8 +89,8 @@ class RenderCache(QObject):
             return None
 
     def get_thumbnail(self, doc_model, page_num: int, max_width: int = 140,
-                      night_mode: bool = False, dpr: float = 1.0) -> Optional[QPixmap]:
-        key = (page_num, max_width, bool(night_mode))
+                      rotation: int = 0, night_mode: bool = False, dpr: float = 1.0) -> Optional[QPixmap]:
+        key = (page_num, max_width, rotation % 360, bool(night_mode), round(dpr, 2))
         if key in self._thumb_cache:
             self._thumb_cache.move_to_end(key)
             return self._thumb_cache[key]
@@ -100,12 +100,13 @@ class RenderCache(QObject):
             return None
 
         try:
-            scale = (max_width * dpr) / max(1.0, page.rect.width)
-            mat = fitz.Matrix(scale, scale)
+            page_w, page_h = doc_model.get_page_size(page_num, rotation)
+            scale = (max_width * dpr) / max(1.0, page_w)
+            mat = fitz.Matrix(scale, scale).prerotate(rotation)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             if night_mode:
                 pix.invert_irect(pix.irect)
-            qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+            qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
             qimg.setDevicePixelRatio(dpr)
             pixmap = QPixmap.fromImage(qimg)
 
@@ -115,3 +116,4 @@ class RenderCache(QObject):
             return pixmap
         except Exception:
             return None
+

@@ -64,8 +64,8 @@ def get_stylesheet(theme: str = "dark") -> str:
             color: {text_muted};
             border: none;
             border-radius: 0px;
-            font-size: 12px;
-            font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+            font-size: 10px;
+            font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif;
             padding: 0px;
             margin: 0px;
         }}
@@ -81,8 +81,8 @@ def get_stylesheet(theme: str = "dark") -> str:
             color: {text_muted};
             border: none;
             border-radius: 0px;
-            font-size: 13px;
-            font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+            font-size: 10px;
+            font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif;
             padding: 0px;
             margin: 0px;
         }}

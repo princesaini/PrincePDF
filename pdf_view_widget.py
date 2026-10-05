@@ -7,11 +7,12 @@ smooth zooming, rotation, keyboard shortcuts, and page virtualization.
 from typing import List, Optional, Dict
 import fitz
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QTimer
-from PyQt6.QtGui import QWheelEvent, QKeyEvent, QResizeEvent, QPalette, QColor
+from PyQt6.QtGui import QWheelEvent, QKeyEvent, QResizeEvent, QPalette, QColor, QCursor
 from PyQt6.QtWidgets import (
     QScrollArea, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QApplication, QFrame
 )
+from PyQt6 import sip
 
 from page_widget import PdfPageWidget
 
@@ -196,11 +197,9 @@ class PdfViewWidget(QScrollArea):
         # Clear existing layout on container
         old_layout = self.container.layout()
         if old_layout is not None:
-            # remove all items
             while old_layout.count():
-                child = old_layout.takeAt(0)
-                # do not delete page_widgets, just unparent from layout
-            QWidget().setLayout(old_layout)
+                old_layout.takeAt(0)
+            sip.delete(old_layout)
 
         dpr = self.devicePixelRatioF()
 
@@ -210,12 +209,9 @@ class PdfViewWidget(QScrollArea):
             layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             for idx, pw in enumerate(self.page_widgets):
-                if idx == self.current_page:
-                    pw.set_display_params(self.zoom, self.rotation, self.night_mode, dpr)
-                    pw.setVisible(True)
-                    layout.addWidget(pw)
-                else:
-                    pw.setVisible(False)
+                pw.set_display_params(self.zoom, self.rotation, self.night_mode, dpr)
+                layout.addWidget(pw)
+                pw.setVisible(idx == self.current_page)
 
         elif self.view_mode == ViewMode.CONTINUOUS:
             layout = QVBoxLayout(self.container)
@@ -347,8 +343,11 @@ class PdfViewWidget(QScrollArea):
         self.currentPageChanged.emit(self.current_page)
 
         if self.view_mode == ViewMode.SINGLE:
-            self._rebuild_layout()
+            for idx, pw in enumerate(self.page_widgets):
+                pw.setVisible(idx == page_num)
+            self.container.adjustSize()
             self.verticalScrollBar().setValue(0)
+            self.horizontalScrollBar().setValue(0)
         else:
             # Scroll to target page widget
             pw = self.page_widgets[page_num]
@@ -356,6 +355,26 @@ class PdfViewWidget(QScrollArea):
             self._is_updating_scroll = True
             self.verticalScrollBar().setValue(target_y)
             self._is_updating_scroll = False
+
+    def scroll_to_rect(self, page_num: int, rect: fitz.Rect):
+        """Scrolls viewport so that specified page and fitz.Rect are centered in view."""
+        if not self.page_widgets or page_num < 0 or page_num >= len(self.page_widgets):
+            return
+
+        self.go_to_page(page_num)
+        pw = self.page_widgets[page_num]
+        w_rect = pw._pdf_rect_to_widget_rect(rect)
+
+        vp_w = self.viewport().width()
+        vp_h = self.viewport().height()
+
+        target_y = int(pw.pos().y() + w_rect.center().y() - vp_h / 2)
+        target_x = int(pw.pos().x() + w_rect.center().x() - vp_w / 2)
+
+        self._is_updating_scroll = True
+        self.verticalScrollBar().setValue(max(0, target_y))
+        self.horizontalScrollBar().setValue(max(0, target_x))
+        self._is_updating_scroll = False
 
     def next_page(self):
         if self.current_page < len(self.page_widgets) - 1:
@@ -378,13 +397,17 @@ class PdfViewWidget(QScrollArea):
         if self._is_updating_scroll or not self.page_widgets or self.view_mode == ViewMode.SINGLE:
             return
 
-        viewport_center_y = value + self.viewport().height() // 3
-
-        # Find which page is closest to viewport top/center
-        best_page = 0
+        probe_y = value + self.viewport().height() // 3
+        best_page = self.current_page
         min_dist = float("inf")
+
         for idx, pw in enumerate(self.page_widgets):
-            dist = abs(pw.pos().y() - viewport_center_y)
+            top = pw.pos().y()
+            bottom = top + pw.height()
+            if top <= probe_y <= bottom:
+                best_page = idx
+                break
+            dist = min(abs(top - probe_y), abs(bottom - probe_y))
             if dist < min_dist:
                 min_dist = dist
                 best_page = idx
@@ -402,7 +425,13 @@ class PdfViewWidget(QScrollArea):
         kind = link.get("kind", 0)
         if kind == fitz.LINK_GOTO:
             target_page = link.get("page", 0)
-            self.go_to_page(target_page)
+            to_pt = link.get("to")
+            if to_pt is not None:
+                # Scroll to target point with small rect around it
+                target_rect = fitz.Rect(to_pt.x, to_pt.y, to_pt.x + 10, to_pt.y + 10)
+                self.scroll_to_rect(target_page, target_rect)
+            else:
+                self.go_to_page(target_page)
         elif kind == fitz.LINK_URI:
             self.linkClicked.emit(link)
 
@@ -452,15 +481,64 @@ class PdfViewWidget(QScrollArea):
 
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            # Ctrl + Mouse Wheel for smooth zooming
+            # Ctrl + Mouse Wheel for smooth anchor-based zooming
             delta = event.angleDelta().y()
+            if delta == 0:
+                return
+
+            mouse_pos = event.position()
+            vbar = self.verticalScrollBar()
+            hbar = self.horizontalScrollBar()
+
+            old_cw = max(1, self.container.width())
+            old_ch = max(1, self.container.height())
+            rel_x = (mouse_pos.x() + hbar.value()) / old_cw
+            rel_y = (mouse_pos.y() + vbar.value()) / old_ch
+
             if delta > 0:
                 self.zoom_in()
-            elif delta < 0:
+            else:
                 self.zoom_out()
+
+            # Restore anchor point under mouse
+            new_cw = self.container.width()
+            new_ch = self.container.height()
+            self._is_updating_scroll = True
+            hbar.setValue(int(rel_x * new_cw - mouse_pos.x()))
+            vbar.setValue(int(rel_y * new_ch - mouse_pos.y()))
+            self._is_updating_scroll = False
+
             event.accept()
         else:
             super().wheelEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._is_panning = True
+            self._pan_start_pos = event.globalPosition().toPoint()
+            self._pan_start_v = self.verticalScrollBar().value()
+            self._pan_start_h = self.horizontalScrollBar().value()
+            self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, "_is_panning", False) and (event.buttons() & Qt.MouseButton.MiddleButton):
+            delta = event.globalPosition().toPoint() - self._pan_start_pos
+            self.verticalScrollBar().setValue(self._pan_start_v - delta.y())
+            self.horizontalScrollBar().setValue(self._pan_start_h - delta.x())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton and getattr(self, "_is_panning", False):
+            self._is_panning = False
+            self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
