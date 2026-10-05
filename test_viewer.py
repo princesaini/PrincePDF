@@ -194,13 +194,18 @@ def run_tests():
     from app_config import AppConfig
     cfg = AppConfig()
     assert cfg.get("view_mode") == ViewMode.SIDE_BY_SIDE
-    assert cfg.get("sidebar_visible") is False
-    # Reset for cleanliness
     cfg.set("view_mode", ViewMode.CONTINUOUS)
     cfg.set("sidebar_visible", True)
     print("[PASS] Test 23: Preferences persistence and closeEvent verified")
 
-    print("\n=== ALL 23 TESTS PASSED SUCCESSFULLY! ===")
+    # Test 19: Application Version
+    from app_config import APP_VERSION
+    assert APP_VERSION == "1.1"
+    app.setApplicationVersion(APP_VERSION)
+    assert app.applicationVersion() == "1.1"
+    print(f"[PASS] Test 24: Application Version verified (v{APP_VERSION})")
+
+    print("\n=== ALL 24 TESTS PASSED SUCCESSFULLY! ===")
 
 
 

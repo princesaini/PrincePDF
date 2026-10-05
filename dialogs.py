@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QFrame, QMessageBox, QTextBrowser
 )
 import windows_integration as wi
+from app_config import APP_VERSION
 
 
 class DocumentPropertiesDialog(QDialog):
@@ -228,7 +229,7 @@ class AboutDialog(QDialog):
         title_box = QVBoxLayout()
         title_lbl = QLabel("PrincePDF")
         title_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #3b82f6;")
-        sub_lbl = QLabel("Version 1.0.0 — Modern High-Performance PDF Viewer")
+        sub_lbl = QLabel(f"Version {APP_VERSION} — Modern High-Performance PDF Viewer")
         sub_lbl.setStyleSheet("font-size: 12px; color: #94a3b8;")
         title_box.addWidget(title_lbl)
         title_box.addWidget(sub_lbl)

@@ -8,6 +8,7 @@ import os
 from typing import List, Dict, Any
 
 CONFIG_FILE = os.path.expanduser("~/.princepdf_config.json")
+APP_VERSION = "1.1"
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "theme": "dark",             # "dark" or "light"

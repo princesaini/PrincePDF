@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication
 
 from viewer_window import ViewerWindow
 import windows_integration as wi
+from app_config import APP_VERSION
 
 
 def main():
@@ -25,7 +26,7 @@ def main():
     # 1. Set Windows 11 AppUserModelID so taskbar displays app icon properly
     if sys.platform == "win32":
         try:
-            myappid = "princepdf.viewer.modern.1.0"
+            myappid = f"princepdf.viewer.modern.{APP_VERSION}"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass
@@ -41,6 +42,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("PrincePDF")
     app.setApplicationDisplayName("PrincePDF")
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("Prince")
 
     # Set Application Icon
