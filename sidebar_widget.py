@@ -178,6 +178,7 @@ class SidebarWidget(QWidget):
         self._build_outline()
 
     def clear(self):
+        self._pending_thumb_indices = []
         self.thumb_list.clear()
         self.outline_tree.clear()
         self.search_list.clear()
@@ -287,9 +288,11 @@ class SidebarWidget(QWidget):
             # entry is [level, title, page_number, ...]
             level = entry[0]
             title = entry[1]
-            page_num = entry[2] - 1  # 1-indexed to 0-indexed
+            raw_page = entry[2] if len(entry) > 2 else 1
+            page_num = max(0, raw_page - 1) if raw_page > 0 else 0
+            page_label = f" (p. {raw_page})" if raw_page > 0 else ""
 
-            item = QTreeWidgetItem([f"{title} (p. {page_num + 1})"])
+            item = QTreeWidgetItem([f"{title}{page_label}"])
             item.setData(0, Qt.ItemDataRole.UserRole, page_num)
 
             while stack and stack[-1][0] >= level:

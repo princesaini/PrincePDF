@@ -104,10 +104,12 @@ class PdfViewWidget(QScrollArea):
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
 
     def set_canvas_theme(self, is_dark: bool):
-        bg = "#1a1c23" if is_dark else "#e9ecef"
-        bar_bg = "#1e212b" if is_dark else "#dee2e6"
-        bar_handle = "#3e4452" if is_dark else "#adb5bd"
-        bar_hover = "#5c6370" if is_dark else "#6c757d"
+        self._theme_is_dark = is_dark
+        effective_dark = is_dark or self.night_mode
+        bg = "#1a1c23" if effective_dark else "#e9ecef"
+        bar_bg = "#1e212b" if effective_dark else "#dee2e6"
+        bar_handle = "#3e4452" if effective_dark else "#adb5bd"
+        bar_hover = "#5c6370" if effective_dark else "#6c757d"
         self.setStyleSheet(f"""
             QScrollArea {{
                 background-color: {bg};
@@ -281,8 +283,7 @@ class PdfViewWidget(QScrollArea):
 
             dpr = self.devicePixelRatioF()
             for pw in self.page_widgets:
-                if pw.isVisible():
-                    pw.set_display_params(self.zoom, self.rotation, self.night_mode, dpr)
+                pw.set_display_params(self.zoom, self.rotation, self.night_mode, dpr)
 
             self.container.adjustSize()
             self.zoomChanged.emit(self.zoom)
@@ -327,6 +328,7 @@ class PdfViewWidget(QScrollArea):
 
     def toggle_night_mode(self, enabled: bool):
         self.night_mode = enabled
+        self.set_canvas_theme(getattr(self, "_theme_is_dark", True))
         dpr = self.devicePixelRatioF()
         for pw in self.page_widgets:
             pw.set_display_params(self.zoom, self.rotation, self.night_mode, dpr)
@@ -343,8 +345,13 @@ class PdfViewWidget(QScrollArea):
         self.currentPageChanged.emit(self.current_page)
 
         if self.view_mode == ViewMode.SINGLE:
+            dpr = self.devicePixelRatioF()
             for idx, pw in enumerate(self.page_widgets):
-                pw.setVisible(idx == page_num)
+                if idx == page_num:
+                    pw.set_display_params(self.zoom, self.rotation, self.night_mode, dpr)
+                    pw.setVisible(True)
+                else:
+                    pw.setVisible(False)
             self.container.adjustSize()
             self.verticalScrollBar().setValue(0)
             self.horizontalScrollBar().setValue(0)
@@ -582,14 +589,26 @@ class PdfViewWidget(QScrollArea):
                 return
 
         # Direct navigation keys
-        if key == Qt.Key.Key_PageDown or key == Qt.Key.Key_Right:
+        if key in (Qt.Key.Key_PageDown, Qt.Key.Key_Right) or (key == Qt.Key.Key_Down and self.view_mode == ViewMode.SINGLE):
             self.next_page()
             event.accept()
             return
-        elif key == Qt.Key.Key_PageUp or key == Qt.Key.Key_Left:
+        elif key in (Qt.Key.Key_PageUp, Qt.Key.Key_Left) or (key == Qt.Key.Key_Up and self.view_mode == ViewMode.SINGLE):
             self.prev_page()
             event.accept()
             return
+        elif key == Qt.Key.Key_Down:
+            vbar = self.verticalScrollBar()
+            if vbar.maximum() == 0 or vbar.value() >= vbar.maximum() - 2:
+                self.next_page()
+                event.accept()
+                return
+        elif key == Qt.Key.Key_Up:
+            vbar = self.verticalScrollBar()
+            if vbar.maximum() == 0 or vbar.value() <= 2:
+                self.prev_page()
+                event.accept()
+                return
         elif key == Qt.Key.Key_Home:
             self.first_page()
             event.accept()

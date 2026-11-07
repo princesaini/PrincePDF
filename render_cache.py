@@ -7,38 +7,8 @@ color inversion (Night Mode), and thumbnail generation.
 from collections import OrderedDict
 from typing import Optional, Tuple
 import fitz
-from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThreadPool
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
-
-
-class RenderTask(QRunnable):
-    """Background task to pre-render a page pixmap."""
-    def __init__(self, doc_model, page_num: int, zoom: float, rotation: int,
-                 night_mode: bool, dpr: float, callback):
-        super().__init__()
-        self.doc_model = doc_model
-        self.page_num = page_num
-        self.zoom = zoom
-        self.rotation = rotation
-        self.night_mode = night_mode
-        self.dpr = dpr
-        self.callback = callback
-
-    def run(self):
-        try:
-            page = self.doc_model.get_page(self.page_num)
-            if not page:
-                return
-            mat = fitz.Matrix(self.zoom * self.dpr, self.zoom * self.dpr).prerotate(self.rotation)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            if self.night_mode:
-                pix.invert_irect(pix.irect)
-            qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
-            qimg.setDevicePixelRatio(self.dpr)
-            if self.callback:
-                self.callback(self.page_num, qimg)
-        except Exception:
-            pass
 
 
 class RenderCache(QObject):
@@ -50,7 +20,6 @@ class RenderCache(QObject):
         # Cache key: (page_num, round(zoom, 3), rotation, night_mode, dpr) -> QPixmap
         self._cache: OrderedDict = OrderedDict()
         self._thumb_cache: OrderedDict = OrderedDict()
-        self.thread_pool = QThreadPool.globalInstance()
 
     def clear(self):
         self._cache.clear()

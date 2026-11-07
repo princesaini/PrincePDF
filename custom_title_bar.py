@@ -50,14 +50,14 @@ class CustomTitleBar(QWidget):
         self.menu_bar.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.menu_bar)
 
-        # 3. Centered Document Title
+        # 3. Expanding spacer between menus and window buttons
         layout.addStretch(1)
+
+        # Centered Document Title (positioned precisely at the window center)
         self.title_lbl = QLabel("PrincePDF", self)
         self.title_lbl.setObjectName("TitleLabel")
         self.title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        layout.addWidget(self.title_lbl)
-        layout.addStretch(1)
 
         # 4. Window Controls: Minimize, Maximize/Restore, Close
         btn_box = QHBoxLayout()
@@ -107,10 +107,30 @@ class CustomTitleBar(QWidget):
             pix.setDevicePixelRatio(dpr)
             self.icon_lbl.setPixmap(pix)
 
+    def _update_title_geometry(self):
+        """Centers the title label horizontally across the full window width."""
+        if not hasattr(self, "title_lbl") or not hasattr(self, "menu_bar"):
+            return
+        left_limit = self.menu_bar.geometry().right() + 10 if self.menu_bar else 200
+        right_limit = max(left_limit + 50, self.width() - 142)
+        avail_w = max(60, right_limit - left_limit)
+        pref_w = min(avail_w, max(100, self.title_lbl.sizeHint().width() + 20))
+        center_x = self.width() // 2
+        x = max(left_limit, center_x - pref_w // 2)
+        if x + pref_w > right_limit:
+            x = right_limit - pref_w
+        self.title_lbl.setGeometry(int(x), 0, int(pref_w), self.height())
+        self.title_lbl.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_title_geometry()
+
     def set_title(self, title: str):
         """Updates the centered title text and tooltip."""
         self.title_lbl.setText(title)
         self.title_lbl.setToolTip(title)
+        self._update_title_geometry()
 
     def update_max_button(self, is_maximized: bool):
         """Updates the maximize/restore button icon and tooltip based on state."""

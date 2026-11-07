@@ -9,6 +9,27 @@ import fitz
 from typing import List, Dict, Any, Optional, Tuple
 
 
+def _format_pdf_date(date_str: Optional[str]) -> str:
+    """Formats PDF date string (e.g. D:20260909225600) into YYYY-MM-DD HH:MM:SS."""
+    if not date_str:
+        return "N/A"
+    clean = str(date_str).strip()
+    if clean.startswith("D:"):
+        clean = clean[2:]
+    if len(clean) >= 8 and clean[:8].isdigit():
+        year = clean[0:4]
+        month = clean[4:6]
+        day = clean[6:8]
+        time_part = ""
+        if len(clean) >= 14 and clean[8:14].isdigit():
+            hour = clean[8:10]
+            minute = clean[10:12]
+            sec = clean[12:14]
+            time_part = f" {hour}:{minute}:{sec}"
+        return f"{year}-{month}-{day}{time_part}"
+    return str(date_str)
+
+
 class DocumentModel:
     def __init__(self, filepath: Optional[str] = None):
         self.filepath: Optional[str] = None
@@ -101,8 +122,8 @@ class DocumentModel:
             "Keywords": meta.get("keywords") or "N/A",
             "Creator": meta.get("creator") or "N/A",
             "Producer": meta.get("producer") or "N/A",
-            "CreationDate": meta.get("creationDate") or "N/A",
-            "ModDate": meta.get("modDate") or "N/A",
+            "CreationDate": _format_pdf_date(meta.get("creationDate")),
+            "ModDate": _format_pdf_date(meta.get("modDate")),
             "Format": meta.get("format") or "PDF",
             "Pages": self._page_count,
             "Page Size": page_size_str,
@@ -167,7 +188,18 @@ class DocumentModel:
             if not match_case:
                 flags |= fitz.TEXT_DEHYPHENATE
             # search_for returns list of fitz.Rect
-            return page.search_for(query, flags=flags)
+            rects = page.search_for(query, flags=flags)
+            if match_case and rects:
+                # PyMuPDF C search_for is case-insensitive; verify case on extracted text
+                filtered = []
+                for r in rects:
+                    clip_text = page.get_text("text", clip=r)
+                    norm_clip = " ".join(clip_text.split())
+                    norm_query = " ".join(query.split())
+                    if norm_query in norm_clip or query in clip_text:
+                        filtered.append(r)
+                rects = filtered
+            return rects
         except Exception:
             return []
 

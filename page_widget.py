@@ -43,17 +43,21 @@ class PdfPageWidget(QWidget):
 
         # Text selection state
         self._is_selecting: bool = False
+        self._has_dragged: bool = False
         self._selection_start_pt: Optional[QPointF] = None
         self._selection_current_pt: Optional[QPointF] = None
         self._selected_word_indices: Set[int] = set()
         self._selected_text: str = ""
+        self._last_click_time: float = 0.0
+        self._last_click_pos: Optional[QPointF] = None
+        self._click_count: int = 0
 
         # Search highlights: list of fitz.Rect
         self._search_rects: List[fitz.Rect] = []
         self._active_search_rect: Optional[fitz.Rect] = None
 
         # Links on this page: list of dicts from page.get_links()
-        self._links: List[Dict[str, Any]] = []
+        self._links: Optional[List[Dict[str, Any]]] = None
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -133,8 +137,8 @@ class PdfPageWidget(QWidget):
         )
 
     def _ensure_links(self):
-        if not self._links:
-            self._links = self.doc_model.get_page_links(self.page_num)
+        if self._links is None:
+            self._links = self.doc_model.get_page_links(self.page_num) or []
 
     # -------------------------------------------------------------------------
     # Coordinate transforms
@@ -211,14 +215,32 @@ class PdfPageWidget(QWidget):
     # Mouse & Text Selection Handling
     # -------------------------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            event.ignore()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton:
-            self.pageClicked.emit(self.page_num)
+            import time
+            now = time.time()
             pos = event.position()
+            if self._last_click_pos and (pos - self._last_click_pos).manhattanLength() < 5 and (now - self._last_click_time) < 0.45:
+                self._click_count += 1
+            else:
+                self._click_count = 1
+            self._last_click_time = now
+            self._last_click_pos = pos
+
+            if self._click_count == 3:
+                self._select_line_at_point(pos)
+                event.accept()
+                return
+
+            self.pageClicked.emit(self.page_num)
             pdf_pos = self._widget_to_pdf_point(pos)
 
             # Check if clicked on a link
             self._ensure_links()
-            for link in self._links:
+            for link in (self._links or []):
                 from_rect = link.get("from")
                 if from_rect and fitz.Rect(from_rect).contains(fitz.Point(pdf_pos.x(), pdf_pos.y())):
                     self.linkActivated.emit(link)
@@ -226,22 +248,24 @@ class PdfPageWidget(QWidget):
 
             # Start text selection
             self._is_selecting = True
+            self._has_dragged = False
             self._selection_start_pt = pos
             self._selection_current_pt = pos
-            self._selected_word_indices.clear()
-            self._selected_text = ""
-            self.selectionChanged.emit("")
-            self.update()
+            self.clear_selection()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        if event.buttons() & Qt.MouseButton.MiddleButton:
+            event.ignore()
+            return
+
         pos = event.position()
 
         # Update cursor when hovering over links
         self._ensure_links()
         pdf_pos = self._widget_to_pdf_point(pos)
         over_link = False
-        for link in self._links:
+        for link in (self._links or []):
             from_rect = link.get("from")
             if from_rect and fitz.Rect(from_rect).contains(fitz.Point(pdf_pos.x(), pdf_pos.y())):
                 over_link = True
@@ -253,24 +277,36 @@ class PdfPageWidget(QWidget):
             self.setCursor(QCursor(Qt.CursorShape.IBeamCursor))
 
         if self._is_selecting and (event.buttons() & Qt.MouseButton.LeftButton):
-            self._selection_current_pt = pos
-            self._compute_selection()
-            self.update()
+            if self._selection_start_pt and (pos - self._selection_start_pt).manhattanLength() > 4:
+                self._has_dragged = True
+            if self._has_dragged:
+                self._selection_current_pt = pos
+                self._compute_selection()
+                self.update()
 
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            event.ignore()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton and self._is_selecting:
             self._is_selecting = False
-            self._compute_selection()
-            self._rebuild_selected_text()
-            self.selectionChanged.emit(self._selected_text)
-            self.update()
+            if self._has_dragged:
+                self._compute_selection()
+                self._rebuild_selected_text()
+                self.selectionChanged.emit(self._selected_text)
+                self.update()
+            else:
+                self.clear_selection()
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """Double click selects word under cursor."""
         if event.button() == Qt.MouseButton.LeftButton:
+            self._is_selecting = False
+            self._has_dragged = False
             pdf_pt = self._widget_to_pdf_point(event.position())
             words = self.doc_model.get_page_words(self.page_num)
             for idx, w in enumerate(words):
@@ -282,6 +318,24 @@ class PdfPageWidget(QWidget):
                     self.update()
                     return
         super().mouseDoubleClickEvent(event)
+
+    def _select_line_at_point(self, pt: QPointF):
+        """Triple click selects entire line of text under cursor."""
+        self._is_selecting = False
+        self._has_dragged = False
+        pdf_pt = self._widget_to_pdf_point(pt)
+        words = self.doc_model.get_page_words(self.page_num)
+        for idx, w in enumerate(words):
+            w_rect = fitz.Rect(w[0], w[1], w[2], w[3])
+            if w_rect.contains(fitz.Point(pdf_pt.x(), pdf_pt.y())):
+                target_block = w[5]
+                target_line = w[6]
+                line_indices = {i for i, word in enumerate(words) if word[5] == target_block and word[6] == target_line}
+                self._selected_word_indices = line_indices
+                self._rebuild_selected_text()
+                self.selectionChanged.emit(self._selected_text)
+                self.update()
+                return
 
     def _compute_selection(self):
         """Computes selected words based on start and current drag points."""

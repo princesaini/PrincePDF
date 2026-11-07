@@ -27,6 +27,9 @@ class SearchBar(QFrame):
         self._debounce_timer.setInterval(150)
         self._debounce_timer.timeout.connect(self._emit_search)
 
+        self._last_searched_query = ""
+        self._last_match_case = False
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(8)
@@ -184,6 +187,10 @@ class SearchBar(QFrame):
         self.input_field.selectAll()
 
     def hide_and_clear(self):
+        self._last_searched_query = ""
+        self._last_match_case = False
+        self.input_field.clear()
+        self.count_label.setText("0 matches")
         self.hide()
         self.closed.emit()
 
@@ -206,13 +213,18 @@ class SearchBar(QFrame):
     def _emit_search(self):
         query = self.input_field.text().strip()
         match_case = self.case_checkbox.isChecked()
+        self._last_searched_query = query
+        self._last_match_case = match_case
         self.searchRequested.emit(query, match_case)
 
     def eventFilter(self, obj, event):
         if obj == self.input_field and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 self._debounce_timer.stop()
-                self._emit_search()
+                query = self.input_field.text().strip()
+                match_case = self.case_checkbox.isChecked()
+                if query != self._last_searched_query or match_case != self._last_match_case:
+                    self._emit_search()
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                     self.findPrevRequested.emit()
                 else:

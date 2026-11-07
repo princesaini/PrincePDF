@@ -6,7 +6,7 @@ block_cipher = None
 
 excluded_modules = [
     # Machine Learning, Data Science, and Heavy Libraries
-    'torch', 'torchvision', 'torchaudio', 'transformers', 'tokenizers',
+    'numpy', 'torch', 'torchvision', 'torchaudio', 'transformers', 'tokenizers',
     'sentence_transformers', 'sentencepiece', 'scipy', 'pandas', 'matplotlib',
     'cv2', 'opencv_python', 'opencv_python_headless', 'onnxruntime',
     'rapidocr_onnxruntime', 'nltk', 'sympy', 'sklearn', 'scikit_learn',
@@ -18,6 +18,7 @@ excluded_modules = [
     'unstructured', 'tqdm', 'rich', 'alembic', 'botocore', 'boto3',
     'google', 'grpc', 'fastapi', 'starlette', 'uvicorn', 'websockets',
     'peewee', 'PIL', 'Pillow', 'pyarrow', 'pyarrow.parquet',
+    'tkinter', '_tkinter', 'unittest', 'xmlrpc', 'test', 'distutils',
     # Unused PyQt6 submodules
     'PyQt6.QtQuick', 'PyQt6.QtQuickWidgets', 'PyQt6.QtQuick3D',
     'PyQt6.QtQml', 'PyQt6.QtNetwork', 'PyQt6.QtSql', 'PyQt6.QtTest',

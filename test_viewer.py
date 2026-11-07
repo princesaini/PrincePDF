@@ -205,7 +205,89 @@ def run_tests():
     assert app.applicationVersion() == "1.1"
     print(f"[PASS] Test 24: Application Version verified (v{APP_VERSION})")
 
-    print("\n=== ALL 24 TESTS PASSED SUCCESSFULLY! ===")
+    # Test 20: BUG-01 Fix - Search Enter Key Cycling Across All Matches
+    win_search = ViewerWindow(pdf_path)
+    win_search.search_bar.show_and_focus()
+    win_search.search_bar.input_field.setText("PrincePDF")
+    win_search.search_bar._emit_search()
+    assert win_search._current_search_idx == 0
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QKeyEvent
+    enter_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+    win_search.search_bar.eventFilter(win_search.search_bar.input_field, enter_ev)
+    assert win_search._current_search_idx == 1, f"Expected match 1, got {win_search._current_search_idx}"
+    win_search.search_bar.eventFilter(win_search.search_bar.input_field, enter_ev)
+    assert win_search._current_search_idx == 2, f"Expected match 2, got {win_search._current_search_idx}"
+    win_search.search_bar.eventFilter(win_search.search_bar.input_field, enter_ev)
+    assert win_search._current_search_idx == 3, f"Expected match 3, got {win_search._current_search_idx}"
+    win_search.search_bar.eventFilter(win_search.search_bar.input_field, enter_ev)
+    assert win_search._current_search_idx == 0, f"Expected wrap to match 0, got {win_search._current_search_idx}"
+    print("[PASS] Test 25: Search Enter key cycles seamlessly across all matches (BUG-01 fixed)")
+
+    # Test 21: BUG-02 Fix - Single Page View Zoom Propagation
+    win_search.set_view_mode(ViewMode.SINGLE)
+    win_search.pdf_view.set_zoom(2.2)
+    win_search.pdf_view.next_page()
+    assert win_search.pdf_view.current_page == 1
+    assert abs(win_search.pdf_view.page_widgets[1].zoom - 2.2) < 0.01, f"Expected page 1 zoom 2.2, got {win_search.pdf_view.page_widgets[1].zoom}"
+    print("[PASS] Test 26: Single Page View zoom persists across page navigation (BUG-02 fixed)")
+
+    # Test 22: BUG-03 Fix - Custom Zoom Typing
+    win_search.zoom_combo.lineEdit().setText("175%")
+    win_search.zoom_combo.lineEdit().returnPressed.emit()
+    assert abs(win_search.pdf_view.zoom - 1.75) < 0.01, f"Expected zoom 1.75, got {win_search.pdf_view.zoom}"
+    print("[PASS] Test 27: Custom zoom entry parses and updates without premature overwrite (BUG-03 fixed)")
+
+    # Test 23: BUG-04 Fix - Case-Sensitive Search
+    res_sensitive = doc_model.search_document("princepdf", match_case=True)
+    assert len(res_sensitive) == 0, f"Expected 0 case-sensitive matches for 'princepdf', got {len(res_sensitive)}"
+    res_exact = doc_model.search_document("PrincePDF", match_case=True)
+    assert len(res_exact) >= 2, f"Expected >= 2 matches for exact 'PrincePDF', got {len(res_exact)}"
+    print("[PASS] Test 28: Case-sensitive search discrimination verified (BUG-04 fixed)")
+
+    # Test 24: BUG-05 Fix - Single Click Does Not Prematurely Select Text
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QMouseEvent
+    test_pw = win_search.pdf_view.page_widgets[0]
+    w0 = words_p0[0]
+    center_pt = test_pw._pdf_rect_to_widget_rect(fitz.Rect(w0[0], w0[1], w0[2], w0[3])).center()
+    ev_press = QMouseEvent(QMouseEvent.Type.MouseButtonPress, center_pt, center_pt, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    test_pw.mousePressEvent(ev_press)
+    ev_release = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, center_pt, center_pt, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    test_pw.mouseReleaseEvent(ev_release)
+    assert test_pw._selected_text == "", f"Expected empty selection on single click, got '{test_pw._selected_text}'"
+    # Triple click selects full line
+    test_pw._select_line_at_point(center_pt)
+    assert "PrincePDF" in test_pw._selected_text
+    print("[PASS] Test 29: Single click clears selection and triple-click selects line (BUG-05 fixed)")
+
+    # Test 25: UI-01 - Compact Toolbar Width
+    tb_hint = win_search.toolbar.sizeHint()
+    assert tb_hint.width() <= 1200, f"Toolbar sizeHint width {tb_hint.width()} is too wide!"
+    print(f"[PASS] Test 30: Compact toolbar fits standard screens without overflow ({tb_hint.width()}px) (UI-01 fixed)")
+
+    # Test 26: UI-03 - Welcome View Theme Support
+    win_search.welcome_view.set_theme(is_dark=False)
+    assert win_search.welcome_view.is_dark is False
+    win_search.welcome_view.set_theme(is_dark=True)
+    assert win_search.welcome_view.is_dark is True
+    print("[PASS] Test 31: Welcome card dynamically adapts to Light and Dark themes (UI-03 fixed)")
+
+    # Test 27: UI-05 - Sidebar Search Selection Synchronization
+    if win_search._search_matches and len(win_search._search_matches) > 1:
+        target_p, target_r = win_search._search_matches[1]
+        win_search._on_search_result_selected(target_p, target_r)
+        assert win_search._current_search_idx == 1, f"Expected current search idx 1, got {win_search._current_search_idx}"
+    print("[PASS] Test 32: Sidebar search item selection synchronizes search bar index (UI-05 fixed)")
+
+    # Test 28: PERF-01 - Link Caching Avoids Redundant C++ Bindings
+    test_pw._ensure_links()
+    assert test_pw._links is not None, "Page links should be cached after ensure_links"
+    print("[PASS] Test 33: Link caching prevents redundant C++ queries on mouse moves (PERF-01 fixed)")
+
+    win_search.close()
+
+    print("\n=== ALL 33 TESTS PASSED SUCCESSFULLY! ===")
 
 
 

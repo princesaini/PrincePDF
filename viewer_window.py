@@ -13,7 +13,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt, QSize, QEvent
 from PyQt6.QtGui import (
     QAction, QIcon, QKeySequence, QDragEnterEvent, QDropEvent,
-    QPixmap, QPainter, QCursor
+    QPixmap, QPainter, QCursor, QIntValidator
 )
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -39,30 +39,24 @@ class WelcomeWidget(QWidget):
         super().__init__(parent)
         self.open_callback = open_callback
         self.recent_callback = recent_callback
+        self.is_dark = True
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setContentsMargins(40, 40, 40, 40)
 
-        card = QFrame(self)
-        card.setFixedWidth(520)
-        card.setStyleSheet("""
-            QFrame {
-                background-color: #20232c;
-                border: 2px dashed #3a3f4d;
-                border-radius: 12px;
-                padding: 30px;
-            }
-        """)
-        card_layout = QVBoxLayout(card)
+        self.card = QFrame(self)
+        self.card.setObjectName("WelcomeCard")
+        self.card.setFixedWidth(520)
+        card_layout = QVBoxLayout(self.card)
         card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.setSpacing(16)
 
         # Icon / Logo
         png_path = wi.get_png_icon_path()
         if png_path and os.path.exists(png_path):
-            logo = QLabel(card)
-            dpr = card.devicePixelRatioF() if hasattr(card, "devicePixelRatioF") else 1.0
+            logo = QLabel(self.card)
+            dpr = self.card.devicePixelRatioF() if hasattr(self.card, "devicePixelRatioF") else 1.0
             size_px = int(80 * dpr)
             pix = QPixmap(png_path).scaled(size_px, size_px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             pix.setDevicePixelRatio(dpr)
@@ -71,18 +65,17 @@ class WelcomeWidget(QWidget):
             card_layout.addWidget(logo)
 
         # Welcome Text
-        title = QLabel("PrincePDF", card)
+        title = QLabel("PrincePDF", self.card)
         title.setStyleSheet("font-size: 24px; font-weight: bold; color: #3b82f6;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(title)
 
-        subtitle = QLabel("Fast, Minimalist & Modern PDF Viewer for Windows 11\nDrag & drop a PDF file here or open from disk", card)
-        subtitle.setStyleSheet("font-size: 13px; color: #94a3b8; text-align: center;")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        card_layout.addWidget(subtitle)
+        self.subtitle = QLabel("Fast, Minimalist & Modern PDF Viewer for Windows 11\nDrag & drop a PDF file here or open from disk", self.card)
+        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(self.subtitle)
 
         # Open File Button
-        open_btn = QPushButton("📂 Open PDF File", card)
+        open_btn = QPushButton("📂 Open PDF File", self.card)
         open_btn.setFixedHeight(40)
         open_btn.setStyleSheet("""
             QPushButton {
@@ -101,13 +94,29 @@ class WelcomeWidget(QWidget):
         card_layout.addWidget(open_btn)
 
         # Recent Files Box
-        self.recent_frame = QFrame(card)
+        self.recent_frame = QFrame(self.card)
         self.recent_layout = QVBoxLayout(self.recent_frame)
         self.recent_layout.setContentsMargins(0, 10, 0, 0)
         self.recent_layout.setSpacing(6)
         card_layout.addWidget(self.recent_frame)
 
-        layout.addWidget(card)
+        layout.addWidget(self.card)
+        self.set_theme(is_dark=True)
+
+    def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
+        card_bg = "#20232c" if is_dark else "#ffffff"
+        card_border = "#3a3f4d" if is_dark else "#cbd5e1"
+        sub_color = "#94a3b8" if is_dark else "#64748b"
+        self.card.setStyleSheet(f"""
+            QFrame#WelcomeCard {{
+                background-color: {card_bg};
+                border: 2px dashed {card_border};
+                border-radius: 12px;
+                padding: 30px;
+            }}
+        """)
+        self.subtitle.setStyleSheet(f"font-size: 13px; color: {sub_color}; text-align: center;")
         self.refresh_recents()
 
     def refresh_recents(self):
@@ -120,27 +129,33 @@ class WelcomeWidget(QWidget):
         config = AppConfig()
         recents = config.get_recent_files()
         if recents:
+            header_color = "#94a3b8" if self.is_dark else "#64748b"
             header = QLabel("Recent Documents:")
-            header.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: bold; text-transform: uppercase;")
+            header.setStyleSheet(f"color: {header_color}; font-size: 11px; font-weight: bold; text-transform: uppercase;")
             self.recent_layout.addWidget(header)
+
+            btn_bg = "#181a20" if self.is_dark else "#f8fafc"
+            btn_color = "#f1f5f9" if self.is_dark else "#0f172a"
+            btn_border = "#333846" if self.is_dark else "#e2e8f0"
+            btn_hover = "#2c303c" if self.is_dark else "#f1f5f9"
 
             for path in recents[:5]:
                 btn = QPushButton(f"📄 {os.path.basename(path)}")
                 btn.setToolTip(path)
-                btn.setStyleSheet("""
-                    QPushButton {
+                btn.setStyleSheet(f"""
+                    QPushButton {{
                         text-align: left;
-                        background-color: #181a20;
-                        color: #f1f5f9;
-                        border: 1px solid #333846;
+                        background-color: {btn_bg};
+                        color: {btn_color};
+                        border: 1px solid {btn_border};
                         border-radius: 5px;
                         padding: 6px 12px;
                         font-size: 12px;
-                    }
-                    QPushButton:hover {
-                        background-color: #2c303c;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {btn_hover};
                         border-color: #3b82f6;
-                    }
+                    }}
                 """)
                 btn.clicked.connect(lambda checked, p=path: self.recent_callback(p))
                 self.recent_layout.addWidget(btn)
@@ -208,6 +223,14 @@ class ViewerWindow(QMainWindow):
         self.set_view_mode(saved_mode)
         sidebar_vis = self.config.get("sidebar_visible", True)
         self.sidebar.setVisible(sidebar_vis)
+        saved_tab = self.config.get("sidebar_tab", 0)
+        if 0 <= saved_tab < self.sidebar.tab_widget.count():
+            self.sidebar.tab_widget.setCurrentIndex(saved_tab)
+        saved_zoom_mode = self.config.get("zoom_mode", "fit_width")
+        self.pdf_view.zoom_mode = saved_zoom_mode
+        if saved_zoom_mode == "custom":
+            saved_zoom = self.config.get("custom_zoom", 1.0)
+            self.pdf_view.set_zoom(saved_zoom)
 
         # Connect Search
         self._search_matches = []
@@ -514,6 +537,7 @@ class ViewerWindow(QMainWindow):
         self.page_input.setFixedWidth(42)
         self.page_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.page_input.setText("1")
+        self.page_input.setValidator(QIntValidator(1, 99999, self))
         self.page_input.returnPressed.connect(self._on_page_input_entered)
         self.toolbar.addWidget(self.page_input)
 
@@ -544,7 +568,7 @@ class ViewerWindow(QMainWindow):
             self.zoom_combo.lineEdit().returnPressed.connect(self._on_zoom_combo_entered)
         self.zoom_combo.addItems(["50%", "75%", "100%", "125%", "150%", "200%", "300%", "400%"])
         self.zoom_combo.setCurrentText("100%")
-        self.zoom_combo.currentTextChanged.connect(self._on_zoom_combo_changed)
+        self.zoom_combo.activated.connect(self._on_zoom_combo_activated)
         self.toolbar.addWidget(self.zoom_combo)
 
         zoom_in_btn = QToolButton(self)
@@ -554,13 +578,13 @@ class ViewerWindow(QMainWindow):
         self.toolbar.addWidget(zoom_in_btn)
 
         fit_w_btn = QToolButton(self)
-        fit_w_btn.setText("⬌ Fit Width")
+        fit_w_btn.setText("⬌ Width")
         fit_w_btn.setToolTip("Fit to Width (Ctrl+2)")
         fit_w_btn.clicked.connect(self.pdf_view.set_fit_width)
         self.toolbar.addWidget(fit_w_btn)
 
         fit_p_btn = QToolButton(self)
-        fit_p_btn.setText("⬍ Fit Page")
+        fit_p_btn.setText("⬍ Page")
         fit_p_btn.setToolTip("Fit to Page (Ctrl+1)")
         fit_p_btn.clicked.connect(self.pdf_view.set_fit_page)
         self.toolbar.addWidget(fit_p_btn)
@@ -569,14 +593,14 @@ class ViewerWindow(QMainWindow):
 
         # View Mode Group
         self.single_mode_btn = QToolButton(self)
-        self.single_mode_btn.setText("📄 Single")
+        self.single_mode_btn.setText("📄")
         self.single_mode_btn.setToolTip("Single Page View (Ctrl+Alt+1)")
         self.single_mode_btn.setCheckable(True)
         self.single_mode_btn.clicked.connect(lambda: self.set_view_mode(ViewMode.SINGLE))
         self.toolbar.addWidget(self.single_mode_btn)
 
         self.cont_mode_btn = QToolButton(self)
-        self.cont_mode_btn.setText("📜 Continuous")
+        self.cont_mode_btn.setText("📜")
         self.cont_mode_btn.setToolTip("Continuous Scroll View (Ctrl+Alt+2)")
         self.cont_mode_btn.setCheckable(True)
         self.cont_mode_btn.setChecked(True)
@@ -584,7 +608,7 @@ class ViewerWindow(QMainWindow):
         self.toolbar.addWidget(self.cont_mode_btn)
 
         self.spread_mode_btn = QToolButton(self)
-        self.spread_mode_btn.setText("📖 Spread")
+        self.spread_mode_btn.setText("📖")
         self.spread_mode_btn.setToolTip("Side-by-Side (2 Pages) View (Ctrl+Alt+3)")
         self.spread_mode_btn.setCheckable(True)
         self.spread_mode_btn.clicked.connect(lambda: self.set_view_mode(ViewMode.SIDE_BY_SIDE))
@@ -594,14 +618,14 @@ class ViewerWindow(QMainWindow):
 
         # Rotate
         rot_btn = QToolButton(self)
-        rot_btn.setText("↻ Rotate")
+        rot_btn.setText("↻")
         rot_btn.setToolTip("Rotate Clockwise (Ctrl+R)")
         rot_btn.clicked.connect(self.rotate_clockwise)
         self.toolbar.addWidget(rot_btn)
 
         # Night Mode
         self.night_btn = QToolButton(self)
-        self.night_btn.setText("🌙 Night")
+        self.night_btn.setText("🌙")
         self.night_btn.setToolTip("Invert PDF Colors for Night Reading (Ctrl+N)")
         self.night_btn.setCheckable(True)
         self.night_btn.setChecked(self.is_night_mode)
@@ -610,7 +634,7 @@ class ViewerWindow(QMainWindow):
 
         # Search
         find_btn = QToolButton(self)
-        find_btn.setText("🔍 Find")
+        find_btn.setText("🔍")
         find_btn.setToolTip("Search in Document (Ctrl+F)")
         find_btn.clicked.connect(self.toggle_search_bar)
         self.toolbar.addWidget(find_btn)
@@ -629,7 +653,7 @@ class ViewerWindow(QMainWindow):
 
         # Fullscreen
         fs_btn = QToolButton(self)
-        fs_btn.setText("⛶ Fullscreen")
+        fs_btn.setText("⛶")
         fs_btn.setToolTip("Toggle Fullscreen (F11)")
         fs_btn.clicked.connect(self.toggle_fullscreen)
         self.toolbar.addWidget(fs_btn)
@@ -660,6 +684,7 @@ class ViewerWindow(QMainWindow):
         self.pdf_view.set_canvas_theme(is_dark)
         self.sidebar.set_theme(is_dark)
         self.search_bar.set_theme(is_dark)
+        self.welcome_view.set_theme(is_dark)
         self.theme_btn.setText("☀️ Light" if is_dark else "🌙 Dark")
         self.config.set("theme", self.current_theme)
 
@@ -735,6 +760,9 @@ class ViewerWindow(QMainWindow):
         self.render_cache.clear()
         self.pdf_view.clear_pages()
         self.sidebar.clear()
+        self.search_bar.hide_and_clear()
+        self._search_matches = []
+        self._current_search_idx = -1
         self._show_welcome()
 
     def _show_welcome(self):
@@ -837,6 +865,14 @@ class ViewerWindow(QMainWindow):
         self.zoom_combo.setCurrentText(f"{pct}%")
         self.zoom_combo.blockSignals(False)
         self.status_zoom_lbl.setText(f"{pct}%")
+
+    def _on_zoom_combo_activated(self, index: int):
+        text = self.zoom_combo.itemText(index).replace("%", "").strip()
+        try:
+            val = float(text) / 100.0
+            self.pdf_view.set_zoom(val)
+        except Exception:
+            pass
 
     def _on_zoom_combo_changed(self, text: str):
         text = text.replace("%", "").strip()
@@ -968,6 +1004,13 @@ class ViewerWindow(QMainWindow):
         page_rects = [r for p, r in self._search_matches if p == page_num]
         self.pdf_view.show_search_matches(page_num, page_rects, active_rect=rect)
 
+        # Synchronize search match index and counter
+        for idx, (p, r) in enumerate(self._search_matches):
+            if p == page_num and (r == rect or (abs(r.x0 - rect.x0) < 1.0 and abs(r.y0 - rect.y0) < 1.0)):
+                self._current_search_idx = idx
+                self.search_bar.update_match_count(idx, len(self._search_matches))
+                break
+
     def _on_search_closed(self):
         self.pdf_view.clear_search_highlights()
 
@@ -1054,7 +1097,10 @@ class ViewerWindow(QMainWindow):
     def closeEvent(self, event):
         try:
             self.config.set("sidebar_visible", self.sidebar.isVisible())
+            self.config.set("sidebar_tab", self.sidebar.tab_widget.currentIndex())
             self.config.set("view_mode", self.pdf_view.view_mode)
+            self.config.set("zoom_mode", self.pdf_view.zoom_mode)
+            self.config.set("custom_zoom", self.pdf_view.zoom)
             self.config.set("night_mode", self.is_night_mode)
             self.config.set("window_maximized", self.isMaximized())
             if not self.isMaximized() and not self.isFullScreen():
